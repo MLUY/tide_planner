@@ -1,0 +1,6 @@
+# For all available configuration settings, please go to:
+#   https://docs.viktor.ai/docs/create-apps/references/viktor-config-toml
+
+app_type = 'tree'
+python_version = '3.13'
+registered_name = 'monopile-tide-planner'

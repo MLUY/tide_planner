@@ -1,0 +1,4 @@
+viktor==14.25.0
+pandas
+numpy
+plotly
