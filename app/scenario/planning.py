@@ -12,7 +12,8 @@ Logic
 * Required tide (cm) = (required depth + keel clearance - channel level) * 100.
 * Tide between the hourly points is linearly interpolated.
 
-* just testing git
+* just testing git 1
+* testing git 2
 """
 from __future__ import annotations
 
