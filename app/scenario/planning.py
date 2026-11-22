@@ -37,6 +37,8 @@ CAT_WAIT = "Tidal wait"
 TIME_STEP_H = 1 / 12     # 5 min resolution for the window search
 MAX_WAIT_H = 24 * 14     # stop searching after two weeks
 
+def mybranchfunc():
+    print("branch")
 
 class PlanningError(Exception):
     """Input problem the user can fix."""
