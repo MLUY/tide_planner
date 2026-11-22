@@ -39,6 +39,7 @@ MAX_WAIT_H = 24 * 14     # stop searching after two weeks
 
 def mybranchfunc():
     print("branch")
+    print("anotherbranch")
 
 class PlanningError(Exception):
     """Input problem the user can fix."""
