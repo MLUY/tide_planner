@@ -17,10 +17,6 @@ def _run_plan(params):
         raise vkt.UserError("Please fill in the start date.")
     if not params.tide_file:
         raise vkt.UserError("Please upload the tidal data csv file.")
-    if not params.n_mps or params.n_mps < 1:
-        raise vkt.UserError("Number of monopiles must be at least 1.")
-    if not params.mps_per_cycle or params.mps_per_cycle < 1:
-        raise vkt.UserError("Monopiles per cycle must be at least 1.")
 
     phases = [Phase(name=r.phase or f"Phase {i + 1}", type=r.type, hours=float(r.hours or 0))
               for i, r in enumerate(params.cycle)]
@@ -29,8 +25,7 @@ def _run_plan(params):
     start = datetime.combine(params.start_date, datetime.min.time()) + timedelta(hours=float(params.start_hour or 0))
     try:
         tide = load_tide(params.tide_file.file.getvalue_binary())
-        return plan_installation(n_mps=int(params.n_mps), mps_per_cycle=int(params.mps_per_cycle),
-                                 start=start, phases=phases, tide=tide, rule=rule)
+        return plan_installation(start=start, phases=phases, tide=tide, rule=rule)
     except PlanningError as exc:
         raise vkt.UserError(str(exc))
 
@@ -44,13 +39,11 @@ def _draft_check(params, **kwargs) -> str:
 
 class Parametrization(vkt.Parametrization):
     title = vkt.Text("## Monopile installation - tidal planning (Bokalift 2)")
-    n_mps = vkt.IntegerField("Number of monopiles to install", default=100, min=1)
-    mps_per_cycle = vkt.IntegerField("Monopiles per cycle", default=2, min=1)
     start_date = vkt.DateField("Start date")
     start_hour = vkt.NumberField("Start time (hour of day)", default=0, min=0, max=23.99, suffix="h")
 
     lb1 = vkt.LineBreak()
-    cycle_text = vkt.Text("**Cycle without tidal restriction** (repeats until all monopiles are installed). "
+    cycle_text = vkt.Text("**Cycle without tidal restriction** (repeats from the start until the tidal data ends). "
                           "The port is left at the start of *Sail to site* and entered at the end of *Sail to port*.")
     cycle = vkt.DynamicArray("Cycle phases", min=4, default=DEFAULT_CYCLE)
     cycle.phase = vkt.TextField("Phase", flex=45)
@@ -165,7 +158,7 @@ class Scenario(vkt.Controller):
     parametrization = Parametrization
 
     summary = vkt.Summary(
-        item_mps=vkt.SummaryItem("Monopiles", float, "parametrization", "n_mps"),
+        item_start=vkt.SummaryItem("Start date", str, "parametrization", "start_date"),
     )
 
     @vkt.PlotlyView("Planning (Gantt)", duration_guess=2)
@@ -183,3 +176,4 @@ class Scenario(vkt.Controller):
     @vkt.PlotlyView("Tidal delay", duration_guess=2)
     def delay_view(self, params, **kwargs):
         return vkt.PlotlyResult(json.loads(build_delay_curve(_run_plan(params)).to_json()))
+n()))
