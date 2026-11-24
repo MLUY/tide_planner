@@ -14,6 +14,7 @@ from .planning import (DEFAULT_CYCLE, PHASE_TYPES, GateRule, Phase, PlanningErro
 COLORS = {"Port": "#8c564b", "Sailing": "#1f77b4", "Installation": "#2ca02c", "Tidal wait": "#d62728",
           "Time restriction wait": "#e377c2"}
 WAIT_CATEGORIES = ("Tidal wait", "Time restriction wait")
+RESTRICT_NO, RESTRICT_YES = "No", "Yes"
 DEFAULT_TIDE = Path(__file__).resolve().parents[2] / "sample_data" / "gunsan_tide_2026_hourly.csv"
 
 
@@ -39,7 +40,8 @@ def _run_plan(params):
     restrictions = [TimeRestriction(description=(r.description or "").strip(),
                                     from_h=float(r.from_h or 0), to_h=float(r.to_h or 0))
                     for r in (params.time_restrictions or [])
-                    if r.description or r.from_h or r.to_h]
+                    if r.description or r.from_h or r.to_h] \
+        if params.use_time_restrictions == RESTRICT_YES else []
     start = datetime.combine(params.start_date, datetime.min.time()) + timedelta(hours=float(params.start_hour or 0))
     try:
         data = params.tide_file.file.getvalue_binary() if params.tide_file else DEFAULT_TIDE.read_bytes()
@@ -48,6 +50,9 @@ def _run_plan(params):
                                  n_cycles=int(params.n_cycles or 0), restrictions=restrictions)
     except PlanningError as exc:
         raise vkt.UserError(str(exc))
+
+
+_RESTRICT_ON = vkt.IsEqual(vkt.Lookup("use_time_restrictions"), RESTRICT_YES)
 
 
 class Parametrization(vkt.Parametrization):
@@ -84,13 +89,16 @@ class Parametrization(vkt.Parametrization):
     tide_file = vkt.FileField("Tidal data (optional, default Gunsan 2026)", file_types=[".csv"])
 
     lb5 = vkt.LineBreak()
-    restriction_text = vkt.Text("### Time restrictions - sailing in/out of port\n"
-                                "Daily periods in which the vessel may **not sail in or out** of the port "
+    restriction_title = vkt.Text("### Time restrictions - sailing in/out of port")
+    use_time_restrictions = vkt.OptionField("Apply time restrictions?", options=[RESTRICT_NO, RESTRICT_YES],
+                                            default=RESTRICT_NO)
+    restriction_text = vkt.Text("Daily periods in which the vessel may **not sail in or out** of the port "
                                 "(e.g. no night transits). The vessel waits (alongside for departure, outside "
                                 "the port for entry) until the period has ended, on top of the tidal window. "
                                 "A period may run past midnight (e.g. from 22 to 6). "
-                                "Times in hours of the day, same time zone as the tidal data.")
-    time_restrictions = vkt.Table("Time restrictions")
+                                "Times in hours of the day, same time zone as the tidal data.",
+                                visible=_RESTRICT_ON)
+    time_restrictions = vkt.Table("Time restrictions", visible=_RESTRICT_ON)
     time_restrictions.description = vkt.TextField("Description")
     time_restrictions.from_h = vkt.NumberField("Not allowed from", suffix="h", min=0, max=24)
     time_restrictions.to_h = vkt.NumberField("Not allowed until", suffix="h", min=0, max=24)

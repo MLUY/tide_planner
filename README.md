@@ -31,8 +31,9 @@ Optionally a channel transit time can be set; the rule must then hold for that w
 - Tide datum is assumed to be the same as the channel depth datum (chart datum).
 
 ## Time restrictions (sailing in/out of port)
-On top of the tidal rule, daily periods can be defined in which the vessel may **not sail in or out** of the port
-(table *Time restrictions*: description, not allowed from / until, hours of the day).
+On top of the tidal rule, daily periods can be defined in which the vessel may **not sail in or out** of the port.
+Set *Apply time restrictions?* to **Yes** to show the table *Time restrictions* (description, not allowed
+from / until, hours of the day). With **No** (default) the table is hidden and ignored; rows entered earlier are kept.
 - Example: `No night entry`, from 22 until 6 (periods may run past midnight).
 - Departure: the vessel waits alongside; entry: the vessel waits outside the port, until the
   restriction has ended **and** the tidal window is open.
