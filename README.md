@@ -5,6 +5,11 @@ ProjectsFolder > Project > Scenario. Create a Scenario, fill in the inputs and u
 
 Views: **Planning (Gantt)**, **Tide and cycles**, **Cycle table** and **Tidal delay**.
 
+Button **Download planning (Excel)** exports one workbook with the sheets *Summary* (inputs and results),
+*Activities* (every activity and wait, from - to, delay type: no delay / tidal / time restriction),
+*Cycles* (incl. totals and averages), *Departures-Entries* (tide level and waits per port passage)
+and *Tide data* (tide over the planning period with window, restriction and vessel activity).
+
 ## Defaults (Bokalift 2)
 | Phase | Type | Hours |
 |---|---|---|

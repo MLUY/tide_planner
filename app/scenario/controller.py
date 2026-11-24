@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import viktor as vkt
 
+from .export import build_excel
 from .planning import (DEFAULT_CYCLE, PHASE_TYPES, GateRule, Phase, PlanningError, TimeRestriction,
                        load_tide, plan_installation)
 
@@ -57,6 +58,9 @@ _RESTRICT_ON = vkt.IsEqual(vkt.Lookup("use_time_restrictions"), RESTRICT_YES)
 
 class Parametrization(vkt.Parametrization):
     title = vkt.Text("## Monopile installation - tidal planning (Bokalift 2)")
+    download_excel = vkt.DownloadButton("Download planning (Excel)", method="download_excel",
+                                        description="All activities (from - to, type of delay), cycles, "
+                                                    "departures/entries and tidal data in one Excel file.")
 
     planning_text = vkt.Text("### Planning")
     start_date = vkt.DateField("Start date")
@@ -241,9 +245,30 @@ def build_cycle_table(res) -> go.Figure:
     return fig
 
 
+def _export_inputs(params) -> dict:
+    return dict(
+        general=[("Start date", datetime.combine(params.start_date, datetime.min.time())
+                  + timedelta(hours=float(params.start_hour or 0)), ""),
+                 ("Number of cycles", int(params.n_cycles or 0), ""),
+                 ("Vessel draft", float(params.draft or 0), "m"),
+                 ("Keel clearance", float(params.keel_clearance or 0), "m"),
+                 ("Dredged channel depth CD", float(params.channel_depth or 0), "m"),
+                 ("Extra margin - rising tide", float(params.margin_rising or 0), "cm"),
+                 ("Extra margin - falling tide", float(params.margin_falling or 0), "cm")],
+        phases=[(r.phase or f"Phase {i + 1}", r.type, float(r.hours or 0))
+                for i, r in enumerate(params.cycle) if r.type or r.phase or r.hours],
+        tide_source=(getattr(params.tide_file, "filename", None) or "uploaded file") if params.tide_file
+        else f"default: {DEFAULT_TIDE.name}")
+
+
 class Scenario(vkt.Controller):
     label = "Scenario"
     parametrization = Parametrization
+
+    def download_excel(self, params, **kwargs):
+        res = _run_plan(params)
+        name = f"tide_planning_{res.start:%Y%m%d}_{res.cycles}cycles.xlsx"
+        return vkt.DownloadResult(build_excel(res, _export_inputs(params)), name)
 
     @vkt.PlotlyView("Planning (Gantt)", duration_guess=2)
     def gantt_view(self, params, **kwargs):
