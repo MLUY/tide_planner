@@ -12,7 +12,18 @@ from .planning import (DEFAULT_CYCLE, PHASE_TYPES, GateRule, Phase, PlanningErro
                        plan_installation)
 
 COLORS = {"Port": "#8c564b", "Sailing": "#1f77b4", "Installation": "#2ca02c", "Tidal wait": "#d62728"}
-DEFAULT_TIDE = Path(_file_).resolve().parents[2] / "sample_data" / "gunsan_tide_2026_hourly.csv"
+DEFAULT_TIDE = Path(__file__).resolve().parents[2] / "sample_data" / "gunsan_tide_2026_hourly.csv"
+
+
+def _required_tide(params):
+    base = (float(params.draft or 0) + float(params.keel_clearance or 0)
+            - float(params.channel_depth or 0)) * 100
+    return base + float(params.margin_rising or 0), base + float(params.margin_falling or 0)
+
+
+def _tide_summary(params, **kwargs) -> str:
+    rising, falling = _required_tide(params)
+    return f"Required tide: **{rising:.0f} cm** on a rising tide, **{falling:.0f} cm** on a falling tide."
 
 
 def _run_plan(params):
@@ -21,8 +32,8 @@ def _run_plan(params):
 
     phases = [Phase(name=r.phase or f"Phase {i + 1}", type=r.type, hours=float(r.hours or 0))
               for i, r in enumerate(params.cycle) if r.type or r.phase or r.hours]
-    rule = GateRule(rising_cm=float(params.tide_rising), falling_cm=float(params.tide_falling),
-                    transit_h=float(params.transit_h or 0))
+    rising, falling = _required_tide(params)
+    rule = GateRule(rising_cm=rising, falling_cm=falling, transit_h=float(params.transit_h or 0))
     start = datetime.combine(params.start_date, datetime.min.time()) + timedelta(hours=float(params.start_hour or 0))
     try:
         data = params.tide_file.file.getvalue_binary() if params.tide_file else DEFAULT_TIDE.read_bytes()
@@ -33,38 +44,37 @@ def _run_plan(params):
         raise vkt.UserError(str(exc))
 
 
-def _draft_check(params, **kwargs) -> str:
-    gap = (float(params.draft or 0) - float(params.channel_depth or 0)) * 100
-    return (f"Draft minus channel depth = *{gap:.0f} cm* of tide needed for zero keel clearance. "
-            f"Clearance with the thresholds: rising {float(params.tide_rising or 0) - gap:.0f} cm, "
-            f"falling {float(params.tide_falling or 0) - gap:.0f} cm.")
-
-
 class Parametrization(vkt.Parametrization):
     title = vkt.Text("## Monopile installation - tidal planning (Bokalift 2)")
+
+    planning_text = vkt.Text("### Planning")
     start_date = vkt.DateField("Start date")
     start_hour = vkt.NumberField("Start time (hour of day)", default=0, min=0, max=23.99, suffix="h")
     n_cycles = vkt.IntegerField("Number of cycles", default=10, min=1)
 
     lb1 = vkt.LineBreak()
-    cycle_text = vkt.Text("*Cycle without tidal restriction* (repeated for the number of cycles above). "
-                          "The port is left at the start of Sail to site and entered at the end of Sail to port.")
+    cycle_text = vkt.Text("### Cycle\nThe port is left at the start of *Sail to site* "
+                          "and entered at the end of *Sail to port*.")
     cycle = vkt.Table("Cycle phases", default=DEFAULT_CYCLE)
     cycle.phase = vkt.TextField("Phase")
     cycle.type = vkt.OptionField("Type", options=PHASE_TYPES)
     cycle.hours = vkt.NumberField("Duration", suffix="hr", min=0)
 
     lb2 = vkt.LineBreak()
-    channel_text = vkt.Text("*Port entrance channel*")
-    channel_depth = vkt.NumberField("Depth of entrance channel", suffix="m", default=7.4)
-    draft = vkt.NumberField("Required vessel draft", suffix="m", default=11.0)
-    tide_rising = vkt.NumberField("Minimum tide to depart/enter - rising tide", suffix="cm", default=360)
-    tide_falling = vkt.NumberField("Minimum tide to depart/enter - falling tide", suffix="cm", default=400)
-    transit_h = vkt.NumberField("Channel transit time (tide must stay above minimum)", suffix="hr",
-                                default=0, min=0)
-    check = vkt.OutputField("Keel clearance check", value=_draft_check, flex=100)
+    vessel_text = vkt.Text("### Vessel")
+    draft = vkt.NumberField("Vessel draft", suffix="m", default=11.0)
+    keel_clearance = vkt.NumberField("Keel clearance", suffix="m", default=0.0, min=0)
 
     lb3 = vkt.LineBreak()
+    channel_text = vkt.Text("### Entrance channel")
+    channel_depth = vkt.NumberField("Depth of entrance channel", suffix="m", default=7.4)
+    transit_h = vkt.NumberField("Channel transit time", suffix="hr", default=0, min=0)
+
+    lb4 = vkt.LineBreak()
+    tide_text = vkt.Text("### Tide")
+    margin_rising = vkt.NumberField("Extra margin - rising tide", suffix="cm", default=0, min=0)
+    margin_falling = vkt.NumberField("Extra margin - falling tide", suffix="cm", default=40, min=0)
+    required = vkt.OutputField("Required tide", value=_tide_summary, flex=100)
     tide_file = vkt.FileField("Tidal data (optional, default Gunsan 2026)", file_types=[".csv"])
 
 
@@ -96,7 +106,6 @@ def build_delay_curve(res) -> go.Figure:
 
 
 def build_tide_cycles(res) -> go.Figure:
-    """Tide curve with activity shading on top, and an activity strip below on the same time axis."""
     tide, rule = res.tide, res.rule
     h0 = max(tide.to_hours(res.start) - 12, 0.0)
     h1 = min(tide.to_hours(res.finish) + 12, float(tide.hours[-1]))
