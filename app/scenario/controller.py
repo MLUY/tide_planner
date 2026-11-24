@@ -81,7 +81,10 @@ class Parametrization(vkt.Parametrization):
     keel_clearance = vkt.NumberField("Keel clearance", suffix="m", default=0.0, min=0)
 
     lb3 = vkt.LineBreak()
-    channel_text = vkt.Text("### Tidal Entrance channel (berth 64 upto buoy 5 IS APPROX 2km)")
+    channel_text = vkt.Text("### Tidal entrance channel")
+    channel_from_to = vkt.TextField("Tidal entrance channel (from - to)", default="Berth 64 up to buoy 5",
+                                    flex=100)
+    channel_length = vkt.NumberField("Channel length (approx.)", suffix="km", default=2.0, min=0)
     channel_depth = vkt.NumberField("Dredged depth CD", suffix="m", default=7.4)
     transit_h = vkt.NumberField("Transit time ", suffix="hr", default=0, min=0)
 
@@ -252,6 +255,8 @@ def _export_inputs(params) -> dict:
                  ("Number of cycles", int(params.n_cycles or 0), ""),
                  ("Vessel draft", float(params.draft or 0), "m"),
                  ("Keel clearance", float(params.keel_clearance or 0), "m"),
+                 ("Tidal entrance channel (from - to)", params.channel_from_to or "", ""),
+                 ("Channel length (approx.)", float(params.channel_length or 0), "km"),
                  ("Dredged channel depth CD", float(params.channel_depth or 0), "m"),
                  ("Extra margin - rising tide", float(params.margin_rising or 0), "cm"),
                  ("Extra margin - falling tide", float(params.margin_falling or 0), "cm")],
