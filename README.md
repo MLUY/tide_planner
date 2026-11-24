@@ -34,7 +34,8 @@ Optionally a channel transit time can be set; the rule must then hold for that w
 On top of the tidal rule, daily periods can be defined in which the vessel may **not sail in or out** of the port.
 Set *Apply time restrictions?* to **Yes** to show the table *Time restrictions* (description, not allowed
 from / until, hours of the day). With **No** (default) the table is hidden and ignored; rows entered earlier are kept.
-- Example: `No night entry`, from 22 until 6 (periods may run past midnight).
+- One row per time slot; any number of slots, they may overlap. Example: `No night transit` 22 until 6
+  (periods may run past midnight) plus `Pilot shift change` 12 until 13.5.
 - Departure: the vessel waits alongside; entry: the vessel waits outside the port, until the
   restriction has ended **and** the tidal window is open.
   If a transit time is set, no restriction may apply during the transit either.

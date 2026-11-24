@@ -96,7 +96,9 @@ class Parametrization(vkt.Parametrization):
                                 "(e.g. no night transits). The vessel waits (alongside for departure, outside "
                                 "the port for entry) until the period has ended, on top of the tidal window. "
                                 "A period may run past midnight (e.g. from 22 to 6). "
-                                "Times in hours of the day, same time zone as the tidal data.",
+                                "Times in hours of the day, same time zone as the tidal data.\n\n"
+                                "Add one row per time slot (e.g. night closure, pilot shift change); "
+                                "any number of slots can be combined and they may overlap.",
                                 visible=_RESTRICT_ON)
     time_restrictions = vkt.Table("Time restrictions", visible=_RESTRICT_ON)
     time_restrictions.description = vkt.TextField("Description")
