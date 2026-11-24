@@ -1,30 +1,32 @@
 import json
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import viktor as vkt
 
 from .planning import (DEFAULT_CYCLE, PHASE_TYPES, GateRule, Phase, PlanningError, load_tide,
                        plan_installation)
 
 COLORS = {"Port": "#8c564b", "Sailing": "#1f77b4", "Installation": "#2ca02c", "Tidal wait": "#d62728"}
+DEFAULT_TIDE = Path(_file_).resolve().parents[2] / "sample_data" / "gunsan_tide_2026_hourly.csv"
 
 
 def _run_plan(params):
     if not params.start_date:
         raise vkt.UserError("Please fill in the start date.")
-    if not params.tide_file:
-        raise vkt.UserError("Please upload the tidal data csv file.")
 
     phases = [Phase(name=r.phase or f"Phase {i + 1}", type=r.type, hours=float(r.hours or 0))
-              for i, r in enumerate(params.cycle)]
+              for i, r in enumerate(params.cycle) if r.type or r.phase or r.hours]
     rule = GateRule(rising_cm=float(params.tide_rising), falling_cm=float(params.tide_falling),
                     transit_h=float(params.transit_h or 0))
     start = datetime.combine(params.start_date, datetime.min.time()) + timedelta(hours=float(params.start_hour or 0))
     try:
-        tide = load_tide(params.tide_file.file.getvalue_binary())
+        data = params.tide_file.file.getvalue_binary() if params.tide_file else DEFAULT_TIDE.read_bytes()
+        tide = load_tide(data)
         return plan_installation(start=start, phases=phases, tide=tide, rule=rule,
                                  n_cycles=int(params.n_cycles or 0))
     except PlanningError as exc:
@@ -33,7 +35,7 @@ def _run_plan(params):
 
 def _draft_check(params, **kwargs) -> str:
     gap = (float(params.draft or 0) - float(params.channel_depth or 0)) * 100
-    return (f"Draft minus channel depth = **{gap:.0f} cm** of tide needed for zero keel clearance. "
+    return (f"Draft minus channel depth = *{gap:.0f} cm* of tide needed for zero keel clearance. "
             f"Clearance with the thresholds: rising {float(params.tide_rising or 0) - gap:.0f} cm, "
             f"falling {float(params.tide_falling or 0) - gap:.0f} cm.")
 
@@ -45,15 +47,15 @@ class Parametrization(vkt.Parametrization):
     n_cycles = vkt.IntegerField("Number of cycles", default=10, min=1)
 
     lb1 = vkt.LineBreak()
-    cycle_text = vkt.Text("**Cycle without tidal restriction** (repeated for the number of cycles above). "
-                          "The port is left at the start of *Sail to site* and entered at the end of *Sail to port*.")
-    cycle = vkt.DynamicArray("Cycle phases", min=4, default=DEFAULT_CYCLE)
-    cycle.phase = vkt.TextField("Phase", flex=45)
-    cycle.type = vkt.OptionField("Type", options=PHASE_TYPES, default=PHASE_TYPES[2], flex=30)
-    cycle.hours = vkt.NumberField("Duration", suffix="hr", min=0, flex=25)
+    cycle_text = vkt.Text("*Cycle without tidal restriction* (repeated for the number of cycles above). "
+                          "The port is left at the start of Sail to site and entered at the end of Sail to port.")
+    cycle = vkt.Table("Cycle phases", default=DEFAULT_CYCLE)
+    cycle.phase = vkt.TextField("Phase")
+    cycle.type = vkt.OptionField("Type", options=PHASE_TYPES)
+    cycle.hours = vkt.NumberField("Duration", suffix="hr", min=0)
 
     lb2 = vkt.LineBreak()
-    channel_text = vkt.Text("**Port entrance channel**")
+    channel_text = vkt.Text("*Port entrance channel*")
     channel_depth = vkt.NumberField("Depth of entrance channel", suffix="m", default=7.4)
     draft = vkt.NumberField("Required vessel draft", suffix="m", default=11.0)
     tide_rising = vkt.NumberField("Minimum tide to depart/enter - rising tide", suffix="cm", default=360)
@@ -63,7 +65,7 @@ class Parametrization(vkt.Parametrization):
     check = vkt.OutputField("Keel clearance check", value=_draft_check, flex=100)
 
     lb3 = vkt.LineBreak()
-    tide_file = vkt.FileField("Tidal data (csv: date-time, tide level in cm)", file_types=[".csv"])
+    tide_file = vkt.FileField("Tidal data (optional, default Gunsan 2026)", file_types=[".csv"])
 
 
 def build_gantt(res) -> go.Figure:
@@ -94,7 +96,7 @@ def build_delay_curve(res) -> go.Figure:
 
 
 def build_tide_cycles(res) -> go.Figure:
-    """Tide level, the rising/falling thresholds, open windows, cycles and the actual gate moments."""
+    """Tide curve with activity shading on top, and an activity strip below on the same time axis."""
     tide, rule = res.tide, res.rule
     h0 = max(tide.to_hours(res.start) - 12, 0.0)
     h1 = min(tide.to_hours(res.finish) + 12, float(tide.hours[-1]))
@@ -103,34 +105,48 @@ def build_tide_cycles(res) -> go.Figure:
     level = tide.level_cm(hrs)
     is_open = tide.gate_open(hrs, rule)
 
-    fig = go.Figure()
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.78, 0.22], vertical_spacing=0.03)
+
+    for s in res.segments:
+        fig.add_vrect(x0=s["start"], x1=s["finish"], fillcolor=COLORS[s["category"]],
+                      opacity=0.12 if s["category"] != "Tidal wait" else 0.3,
+                      line_width=0, layer="below", row=1, col=1)
+
     fig.add_trace(go.Scatter(x=times, y=level, mode="lines", name="Tide level",
-                             line=dict(color="#1f77b4", width=1.5)))
+                             line=dict(color="#1f77b4", width=1.5)), row=1, col=1)
     fig.add_trace(go.Scatter(x=times, y=np.where(is_open, level, np.nan), mode="lines",
-                             name="Window open", line=dict(color="#2ca02c", width=3)))
-    fig.add_hline(y=rule.rising_cm, line=dict(color="black", dash="dash"),
+                             name="Window open", line=dict(color="#2ca02c", width=3)), row=1, col=1)
+    fig.add_hline(y=rule.rising_cm, line=dict(color="black", dash="dash"), row=1, col=1,
                   annotation_text=f"Rising min. {rule.rising_cm:.0f} cm", annotation_position="bottom left")
-    fig.add_hline(y=rule.falling_cm, line=dict(color="black", dash="dot"),
+    fig.add_hline(y=rule.falling_cm, line=dict(color="black", dash="dot"), row=1, col=1,
                   annotation_text=f"Falling min. {rule.falling_cm:.0f} cm", annotation_position="top left")
 
-    for c in res.cycle_stats:
-        fig.add_vrect(x0=c["start"], x1=c["finish"], fillcolor="#7f7f7f" if c["cycle"] % 2 else "#c7c7c7",
-                      opacity=0.08, line_width=0, layer="below")
-    for s in res.segments:
-        if s["category"] == "Tidal wait":
-            fig.add_vrect(x0=s["start"], x1=s["finish"], fillcolor=COLORS["Tidal wait"], opacity=0.3, line_width=0)
-
-    for direction, symbol in (("Departure", "triangle-up"), ("Entry", "triangle-down")):
+    for direction, symbol, color in (("Departure", "triangle-up", "#ff7f0e"), ("Entry", "triangle-down", "#9467bd")):
         g = [x for x in res.gates if x["direction"] == direction]
         fig.add_trace(go.Scatter(
             x=[x["time"] for x in g], y=[x["level_cm"] for x in g], mode="markers", name=direction,
-            marker=dict(symbol=symbol, size=10, color="#ff7f0e" if direction == "Departure" else "#9467bd"),
-            text=[f"Cycle {x['cycle']} {direction.lower()}<br>{x['time']:%Y-%m-%d %H:%M}<br>"
-                  f"Tide {x['level_cm']:.0f} cm ({x['tide']})<br>Waited {x['wait_h']:.1f} h" for x in g],
-            hoverinfo="text"))
-    fig.update_xaxes(rangeslider_visible=True)
-    fig.update_layout(title=f"Tide, open windows (green), tidal waits (red) and port passages - {res.cycles} cycles",
-                      yaxis_title="Tide level (cm)", xaxis_title="Date", height=520, hovermode="closest")
+            marker=dict(symbol=symbol, size=10, color=color),
+            text=[f"Cycle {x['cycle']} {direction.lower()} {x['time']:%Y-%m-%d %H:%M} "
+                  f"Tide {x['level_cm']:.0f} cm ({x['tide']}) Waited {x['wait_h']:.1f} h" for x in g],
+            hoverinfo="text"), row=1, col=1)
+
+    for cat, color in COLORS.items():
+        segs = [s for s in res.segments if s["category"] == cat]
+        if not segs:
+            continue
+        fig.add_trace(go.Bar(
+            base=[s["start"] for s in segs],
+            x=[(s["finish"] - s["start"]).total_seconds() * 1000 for s in segs],
+            y=["Activity"] * len(segs), orientation="h", marker_color=color, name=cat,
+            text=[f"Cycle {s['cycle']}: {s['activity']} {s['start']:%d-%m %H:%M} - {s['finish']:%d-%m %H:%M}"
+                  f" {s['hours']:.1f} h" for s in segs],
+            hoverinfo="text", textposition="none"), row=2, col=1)
+
+    fig.update_xaxes(type="date")
+    fig.update_yaxes(title_text="Tide level (cm)", row=1, col=1)
+    fig.update_yaxes(showticklabels=False, row=2, col=1)
+    fig.update_layout(title=f"Tide and planning - {res.cycles} cycles | total tidal delay {res.total_wait_h:.1f} h",
+                      barmode="overlay", height=650, hovermode="closest", legend_title_text="")
     return fig
 
 
