@@ -157,9 +157,6 @@ class Scenario(vkt.Controller):
     label = "Scenario"
     parametrization = Parametrization
 
-    summary = vkt.Summary(
-        item_start=vkt.SummaryItem("Start date", str, "parametrization", "start_date"),
-    )
 
     @vkt.PlotlyView("Planning (Gantt)", duration_guess=2)
     def gantt_view(self, params, **kwargs):
