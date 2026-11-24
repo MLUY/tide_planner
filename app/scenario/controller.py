@@ -8,10 +8,12 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import viktor as vkt
 
-from .planning import (DEFAULT_CYCLE, PHASE_TYPES, GateRule, Phase, PlanningError, load_tide,
-                       plan_installation)
+from .planning import (DEFAULT_CYCLE, PHASE_TYPES, GateRule, Phase, PlanningError, TimeRestriction,
+                       load_tide, plan_installation)
 
-COLORS = {"Port": "#8c564b", "Sailing": "#1f77b4", "Installation": "#2ca02c", "Tidal wait": "#d62728"}
+COLORS = {"Port": "#8c564b", "Sailing": "#1f77b4", "Installation": "#2ca02c", "Tidal wait": "#d62728",
+          "Time restriction wait": "#ff7f0e"}
+WAIT_CATEGORIES = ("Tidal wait", "Time restriction wait")
 DEFAULT_TIDE = Path(__file__).resolve().parents[2] / "sample_data" / "gunsan_tide_2026_hourly.csv"
 
 
@@ -34,12 +36,16 @@ def _run_plan(params):
               for i, r in enumerate(params.cycle) if r.type or r.phase or r.hours]
     rising, falling = _required_tide(params)
     rule = GateRule(rising_cm=rising, falling_cm=falling, transit_h=float(params.transit_h or 0))
+    restrictions = [TimeRestriction(description=(r.description or "").strip(),
+                                    from_h=float(r.from_h or 0), to_h=float(r.to_h or 0))
+                    for r in (params.time_restrictions or [])
+                    if r.description or r.from_h or r.to_h]
     start = datetime.combine(params.start_date, datetime.min.time()) + timedelta(hours=float(params.start_hour or 0))
     try:
         data = params.tide_file.file.getvalue_binary() if params.tide_file else DEFAULT_TIDE.read_bytes()
         tide = load_tide(data)
         return plan_installation(start=start, phases=phases, tide=tide, rule=rule,
-                                 n_cycles=int(params.n_cycles or 0))
+                                 n_cycles=int(params.n_cycles or 0), restrictions=restrictions)
     except PlanningError as exc:
         raise vkt.UserError(str(exc))
 
@@ -77,6 +83,25 @@ class Parametrization(vkt.Parametrization):
     required = vkt.OutputField("Required tide", value=_tide_summary, flex=100)
     tide_file = vkt.FileField("Tidal data (optional, default Gunsan 2026)", file_types=[".csv"])
 
+    lb5 = vkt.LineBreak()
+    restriction_text = vkt.Text("### Time restrictions - port entry\n"
+                                "Daily periods in which the vessel may **not enter** the port (e.g. no night "
+                                "entry). The vessel waits outside until the period has ended, on top of the "
+                                "tidal window. A period may run past midnight (e.g. from 22 to 6). "
+                                "Times in hours of the day, same time zone as the tidal data.")
+    time_restrictions = vkt.Table("Time restrictions")
+    time_restrictions.description = vkt.TextField("Description")
+    time_restrictions.from_h = vkt.NumberField("Not allowed from", suffix="h", min=0, max=24)
+    time_restrictions.to_h = vkt.NumberField("Not allowed until", suffix="h", min=0, max=24)
+
+
+def _delay_text(res) -> str:
+    txt = f"total delay {res.total_wait_h:.1f} h"
+    if res.restrictions:
+        txt += (f" (tidal {res.total_tidal_wait_h:.1f} h, "
+                f"time restriction {res.total_restriction_wait_h:.1f} h)")
+    return txt
+
 
 def build_gantt(res) -> go.Figure:
     order = []
@@ -91,7 +116,7 @@ def build_gantt(res) -> go.Figure:
     fig.update_xaxes(rangeslider_visible=True)
     fig.update_layout(
         title=(f"{res.cycles} cycles | nominal cycle {res.nominal_cycle_h:.0f} h | "
-               f"finish {res.finish:%Y-%m-%d %H:%M} | total tidal delay {res.total_wait_h:.1f} h"),
+               f"finish {res.finish:%Y-%m-%d %H:%M} | {_delay_text(res)}"),
         height=480, margin=dict(l=220, t=60), legend_title_text="")
     return fig
 
@@ -99,9 +124,11 @@ def build_gantt(res) -> go.Figure:
 def build_delay_curve(res) -> go.Figure:
     fig = go.Figure(go.Scatter(x=[p[0] for p in res.delay_points], y=[p[1] for p in res.delay_points],
                                mode="lines", line=dict(color=COLORS["Tidal wait"], width=2),
-                               name="Cumulative tidal delay"))
-    fig.update_layout(title=f"Cumulative tidal delay: {res.total_wait_h:.1f} h ({res.total_wait_h / 24:.1f} days)",
-                      xaxis_title="Date", yaxis_title="Total tidal delay (hr)", height=450)
+                               name="Cumulative delay"))
+    fig.update_layout(title=f"Cumulative delay: {res.total_wait_h:.1f} h ({res.total_wait_h / 24:.1f} days)"
+                            + (f" - tidal {res.total_tidal_wait_h:.1f} h, time restriction "
+                               f"{res.total_restriction_wait_h:.1f} h" if res.restrictions else ""),
+                      xaxis_title="Date", yaxis_title="Total delay (hr)", height=450)
     return fig
 
 
@@ -118,8 +145,24 @@ def build_tide_cycles(res) -> go.Figure:
 
     for s in res.segments:
         fig.add_vrect(x0=s["start"], x1=s["finish"], fillcolor=COLORS[s["category"]],
-                      opacity=0.12 if s["category"] != "Tidal wait" else 0.3,
+                      opacity=0.3 if s["category"] in WAIT_CATEGORIES else 0.12,
                       line_width=0, layer="below", row=1, col=1)
+
+    # daily periods in which entering the port is not allowed (hatched grey band at the top)
+    if res.restrictions:
+        day = datetime.combine(times[0].date(), datetime.min.time())
+        while day <= times[-1]:
+            for r in res.restrictions:
+                spans = ([(r.from_h, r.to_h)] if r.from_h < r.to_h else [(0.0, r.to_h), (r.from_h, 24.0)])
+                for a, b in spans:
+                    x0, x1 = day + timedelta(hours=a), day + timedelta(hours=b)
+                    if x1 > times[0] and x0 < times[-1]:
+                        fig.add_vrect(x0=x0, x1=x1, y0=0.93, y1=1.0, fillcolor="grey", opacity=0.35,
+                                      line_width=0, layer="below", row=1, col=1)
+            day += timedelta(days=1)
+        fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers", name="No port entry (time restriction)",
+                                 marker=dict(symbol="square", size=12, color="grey", opacity=0.5)),
+                      row=1, col=1)
 
     fig.add_trace(go.Scatter(x=times, y=level, mode="lines", name="Tide level",
                              line=dict(color="#1f77b4", width=1.5)), row=1, col=1)
@@ -136,7 +179,9 @@ def build_tide_cycles(res) -> go.Figure:
             x=[x["time"] for x in g], y=[x["level_cm"] for x in g], mode="markers", name=direction,
             marker=dict(symbol=symbol, size=10, color=color),
             text=[f"Cycle {x['cycle']} {direction.lower()} {x['time']:%Y-%m-%d %H:%M} "
-                  f"Tide {x['level_cm']:.0f} cm ({x['tide']}) Waited {x['wait_h']:.1f} h" for x in g],
+                  f"Tide {x['level_cm']:.0f} cm ({x['tide']}) Waited {x['wait_h']:.1f} h"
+                  + (f" (time restriction {x['restriction_wait_h']:.1f} h)"
+                     if x["restriction_wait_h"] > 1e-9 else "") for x in g],
             hoverinfo="text"), row=1, col=1)
 
     for cat, color in COLORS.items():
@@ -154,7 +199,7 @@ def build_tide_cycles(res) -> go.Figure:
     fig.update_xaxes(type="date")
     fig.update_yaxes(title_text="Tide level (cm)", row=1, col=1)
     fig.update_yaxes(showticklabels=False, row=2, col=1)
-    fig.update_layout(title=f"Tide and planning - {res.cycles} cycles | total tidal delay {res.total_wait_h:.1f} h",
+    fig.update_layout(title=f"Tide and planning - {res.cycles} cycles | {_delay_text(res)}",
                       barmode="overlay", height=650, hovermode="closest", legend_title_text="")
     return fig
 
@@ -163,18 +208,22 @@ def build_cycle_table(res) -> go.Figure:
     dep = {g["cycle"]: g for g in res.gates if g["direction"] == "Departure"}
     ent = {g["cycle"]: g for g in res.gates if g["direction"] == "Entry"}
     cs = res.cycle_stats
-    fig = go.Figure(go.Table(
-        header=dict(values=["Cycle", "Start", "Departure", "Wait dep. (h)", "Entry", "Wait entry (h)",
-                            "Cycle (h)", "Tidal delay (h)"], align="left"),
-        cells=dict(values=[
-            [c["cycle"] for c in cs],
-            [f"{c['start']:%Y-%m-%d %H:%M}" for c in cs],
-            [f"{dep[c['cycle']]['time']:%Y-%m-%d %H:%M}" for c in cs],
-            [f"{dep[c['cycle']]['wait_h']:.1f}" for c in cs],
-            [f"{ent[c['cycle']]['time']:%Y-%m-%d %H:%M}" for c in cs],
-            [f"{ent[c['cycle']]['wait_h']:.1f}" for c in cs],
-            [f"{c['hours']:.1f}" for c in cs],
-            [f"{c['wait_h']:.1f}" for c in cs]], align="left")))
+    header = ["Cycle", "Start", "Departure", "Wait dep. (h)", "Entry", "Wait entry (h)", "Cycle (h)",
+              "Tidal delay (h)"]
+    values = [
+        [c["cycle"] for c in cs],
+        [f"{c['start']:%Y-%m-%d %H:%M}" for c in cs],
+        [f"{dep[c['cycle']]['time']:%Y-%m-%d %H:%M}" for c in cs],
+        [f"{dep[c['cycle']]['wait_h']:.1f}" for c in cs],
+        [f"{ent[c['cycle']]['time']:%Y-%m-%d %H:%M}" for c in cs],
+        [f"{ent[c['cycle']]['wait_h']:.1f}" for c in cs],
+        [f"{c['hours']:.1f}" for c in cs],
+        [f"{c['tidal_wait_h']:.1f}" for c in cs]]
+    if res.restrictions:
+        header += ["Time restr. delay (h)", "Total delay (h)"]
+        values += [[f"{c['restriction_wait_h']:.1f}" for c in cs], [f"{c['wait_h']:.1f}" for c in cs]]
+    fig = go.Figure(go.Table(header=dict(values=header, align="left"),
+                             cells=dict(values=values, align="left")))
     avg = sum(c["hours"] for c in cs) / len(cs)
     fig.update_layout(title=f"Average cycle {avg:.1f} h vs nominal {res.nominal_cycle_h:.0f} h", height=600)
     return fig

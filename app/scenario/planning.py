@@ -13,6 +13,9 @@ Pure Python (no VIKTOR imports) so it can be tested on its own.
 * Departure: the vessel waits alongside until the gate opens.
   Entry: the vessel waits outside the port until the gate opens.
 * Tide is linearly interpolated between data points; rising/falling is the sign of the slope.
+* Time restrictions (optional): daily periods (e.g. 22:00-06:00) in which the vessel may not
+  enter the port. On top of the tidal window, the vessel waits outside until the restriction
+  has ended. Waiting caused by the tide and by a time restriction is reported separately.
 """
 from __future__ import annotations
 
@@ -33,6 +36,7 @@ TYPE_ORDER = {t: i for i, t in enumerate(PHASE_TYPES)}
 
 CATEGORY = {TYPE_PORT: "Port", TYPE_OUT: "Sailing", TYPE_SITE: "Installation", TYPE_IN: "Sailing"}
 CAT_WAIT = "Tidal wait"
+CAT_RESTRICT = "Time restriction wait"
 
 # Bokalift 2 default cycle (no tidal restriction)
 DEFAULT_CYCLE = [
@@ -69,6 +73,28 @@ class GateRule:
 
 
 @dataclass
+class TimeRestriction:
+    """Daily period [from_h, to_h) (hours of the day, 0-24) in which the port may not be entered.
+    from_h > to_h means the period runs past midnight (e.g. 22 -> 6)."""
+    description: str
+    from_h: float
+    to_h: float
+
+    @property
+    def label(self) -> str:
+        def hm(h):
+            m = int(round(h * 60))
+            return f"{m // 60:02d}:{m % 60:02d}"
+        return f"{self.description or 'Time restriction'} ({hm(self.from_h)}-{hm(self.to_h)})"
+
+    def blocked(self, hour_of_day):
+        h = np.asarray(hour_of_day, float)
+        if self.from_h < self.to_h:
+            return (h >= self.from_h) & (h < self.to_h)
+        return (h >= self.from_h) | (h < self.to_h)
+
+
+@dataclass
 class PlanResult:
     segments: list
     gates: list
@@ -81,6 +107,9 @@ class PlanResult:
     tide: object = None
     rule: GateRule = None
     cycle_stats: list = field(default_factory=list)
+    restrictions: list = field(default_factory=list)
+    total_tidal_wait_h: float = 0.0
+    total_restriction_wait_h: float = 0.0
 
 
 class TideCurve:
@@ -96,6 +125,10 @@ class TideCurve:
 
     def to_hours(self, ts: datetime) -> float:
         return (ts - self.t0) / timedelta(hours=1)
+
+    def hour_of_day(self, hours):
+        t0 = self.t0.hour + self.t0.minute / 60 + self.t0.second / 3600
+        return (t0 + np.asarray(hours, float)) % 24
 
     def level_cm(self, hours):
         return np.interp(hours, self.hours, self.cm)
@@ -130,8 +163,30 @@ def load_tide(data: bytes) -> TideCurve:
     return TideCurve(df)
 
 
-def _wait_for_gate(tide: TideCurve, t: datetime, rule: GateRule) -> float:
-    """Smallest wait (h) from t until the gate is open (for the whole transit time, if any)."""
+def validate_restrictions(restrictions: list[TimeRestriction]) -> None:
+    for r in restrictions:
+        name = r.description or "Time restriction"
+        for v in (r.from_h, r.to_h):
+            if not 0 <= v <= 24:
+                raise PlanningError(f"'{name}': times must be between 0 and 24 h.")
+        if r.from_h % 24 == r.to_h % 24:
+            raise PlanningError(f"'{name}': 'from' and 'to' are equal; the port would be closed all day "
+                                f"or never. Remove the row or change the times.")
+
+
+def _restricted(tide: TideCurve, hours, restrictions) -> np.ndarray:
+    hours = np.asarray(hours, float)
+    out = np.zeros(hours.shape, bool)
+    if restrictions:
+        hod = tide.hour_of_day(hours)
+        for r in restrictions:
+            out |= r.blocked(hod)
+    return out
+
+
+def _wait_for_gate(tide: TideCurve, t: datetime, rule: GateRule, restrictions=()) -> float:
+    """Smallest wait (h) from t until the gate is open (for the whole transit time, if any)
+    and, if restrictions are given, no time restriction applies during that period."""
     h0 = tide.to_hours(t)
     if rule.transit_h > 0:
         offs = np.linspace(0.0, rule.transit_h, max(int(math.ceil(rule.transit_h / TIME_STEP_H)) + 1, 2))
@@ -141,10 +196,12 @@ def _wait_for_gate(tide: TideCurve, t: datetime, rule: GateRule) -> float:
     while w <= MAX_WAIT_H:
         if h0 + w + offs[-1] > tide.hours[-1]:
             raise _DataEnd()
-        if tide.gate_open(h0 + w + offs, rule).all():
+        hrs = h0 + w + offs
+        if tide.gate_open(hrs, rule).all() and not _restricted(tide, hrs, restrictions).any():
             return w
         w += TIME_STEP_H
-    raise PlanningError("No tidal window found within 14 days. Check the tide thresholds and the tidal data.")
+    raise PlanningError("No tidal window found within 14 days. Check the tide thresholds, "
+                        "the time restrictions and the tidal data.")
 
 
 def validate_phases(phases: list[Phase]) -> None:
@@ -165,27 +222,45 @@ def validate_phases(phases: list[Phase]) -> None:
         raise PlanningError("The total cycle duration must be more than 0 hours.")
 
 
-def _gate(tide, rule, cycle, direction, t, cum, segs, gates, points):
-    wait = _wait_for_gate(tide, t, rule)
-    if wait > 1e-9:
-        where = "alongside in port" if direction == "Departure" else "outside the port"
-        fin = t + timedelta(hours=wait)
+def _gate(tide, rule, cycle, direction, t, cum, segs, gates, points, restrictions=()):
+    """Wait for the tidal window; for an entry also for the end of any time restriction.
+    The tide-only wait is booked as tidal wait, the extra wait as time restriction wait."""
+    where = "alongside in port" if direction == "Departure" else "outside the port"
+    tidal = _wait_for_gate(tide, t, rule)
+    total = _wait_for_gate(tide, t, rule, restrictions) if restrictions else tidal
+    restr = max(total - tidal, 0.0)
+    if total > 1e-9:
         points.append((t, cum))
+    if tidal > 1e-9:
+        fin = t + timedelta(hours=tidal)
         segs.append(dict(cycle=cycle, activity=f"Tidal wait - {direction.lower()}", category=CAT_WAIT,
-                         detail=f"Waiting {where} for the tidal window", start=t, finish=fin, hours=wait))
-        t, cum = fin, cum + wait
+                         detail=f"Waiting {where} for the tidal window", start=t, finish=fin, hours=tidal))
+        t, cum = fin, cum + tidal
+        points.append((t, cum))
+    if restr > 1e-9:
+        fin = t + timedelta(hours=restr)
+        active = [r.label for r in restrictions
+                  if r.blocked(tide.hour_of_day(tide.to_hours(t)))] or [r.label for r in restrictions]
+        segs.append(dict(cycle=cycle, activity=f"Time restriction wait - {direction.lower()}",
+                         category=CAT_RESTRICT,
+                         detail=f"Waiting {where}: " + "; ".join(active), start=t, finish=fin, hours=restr))
+        t, cum = fin, cum + restr
         points.append((t, cum))
     h = tide.to_hours(t)
-    gates.append(dict(cycle=cycle, direction=direction, time=t, wait_h=wait,
+    gates.append(dict(cycle=cycle, direction=direction, time=t, wait_h=tidal + restr,
+                      tidal_wait_h=tidal, restriction_wait_h=restr,
                       level_cm=float(tide.level_cm(h)),
                       tide="rising" if bool(tide.rising(np.array([h]))[0]) else "falling"))
     return t, cum
 
 
 def plan_installation(*, start: datetime, phases: list[Phase], tide: TideCurve, rule: GateRule,
-                      n_cycles: int) -> PlanResult:
-    """Repeat the cycle n_cycles times from start."""
+                      n_cycles: int, restrictions: list[TimeRestriction] | None = None) -> PlanResult:
+    """Repeat the cycle n_cycles times from start.
+    restrictions: daily periods in which the port may not be entered (applied to the entry only)."""
+    restrictions = list(restrictions or [])
     validate_phases(phases)
+    validate_restrictions(restrictions)
     if n_cycles < 1:
         raise PlanningError("Number of cycles must be at least 1.")
     if start < tide.t0:
@@ -211,7 +286,8 @@ def plan_installation(*, start: datetime, phases: list[Phase], tide: TideCurve, 
                                    detail="", start=t, finish=fin, hours=ph.hours))
                 t = fin
                 if ph.type == TYPE_IN:
-                    t, cum = _gate(tide, rule, cycle, "Entry", t, cum, c_segs, c_gates, c_points)
+                    t, cum = _gate(tide, rule, cycle, "Entry", t, cum, c_segs, c_gates, c_points,
+                                   restrictions)
         except _DataEnd:
             raise PlanningError(f"Tidal data ends {tide.end:%Y-%m-%d %H:%M} during cycle {cycle}. "
                                 f"Use fewer cycles, an earlier start or a longer tidal file.")
@@ -219,10 +295,14 @@ def plan_installation(*, start: datetime, phases: list[Phase], tide: TideCurve, 
         gates += c_gates
         points += c_points
         stats.append(dict(cycle=cycle, start=c_start, finish=t,
-                          hours=(t - c_start).total_seconds() / 3600, wait_h=cum - c_cum))
+                          hours=(t - c_start).total_seconds() / 3600, wait_h=cum - c_cum,
+                          tidal_wait_h=sum(g["tidal_wait_h"] for g in c_gates),
+                          restriction_wait_h=sum(g["restriction_wait_h"] for g in c_gates)))
 
     points.append((t, cum))
     return PlanResult(segments=segments, gates=gates, delay_points=points, cycles=len(stats),
                       start=start, finish=t, total_wait_h=cum,
                       nominal_cycle_h=float(sum(p.hours for p in phases)),
-                      tide=tide, rule=rule, cycle_stats=stats)
+                      tide=tide, rule=rule, cycle_stats=stats, restrictions=restrictions,
+                      total_tidal_wait_h=sum(c["tidal_wait_h"] for c in stats),
+                      total_restriction_wait_h=sum(c["restriction_wait_h"] for c in stats))
