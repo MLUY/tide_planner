@@ -68,7 +68,7 @@ class Parametrization(vkt.Parametrization):
     lb3 = vkt.LineBreak()
     channel_text = vkt.Text("### Entrance channel")
     channel_depth = vkt.NumberField("Depth of entrance channel", suffix="m", default=7.4)
-    transit_h = vkt.NumberField("Channel transit time", suffix="hr", default=0, min=0)
+    transit_h = vkt.NumberField("Tidal Channel transit time", suffix="hr", default=0, min=0)
 
     lb4 = vkt.LineBreak()
     tide_text = vkt.Text("### Tide")
