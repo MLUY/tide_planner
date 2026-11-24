@@ -66,9 +66,9 @@ class Parametrization(vkt.Parametrization):
     keel_clearance = vkt.NumberField("Keel clearance", suffix="m", default=0.0, min=0)
 
     lb3 = vkt.LineBreak()
-    channel_text = vkt.Text("### Entrance channel")
-    channel_depth = vkt.NumberField("Depth of entrance channel", suffix="m", default=7.4)
-    transit_h = vkt.NumberField("Tidal Channel transit time", suffix="hr", default=0, min=0)
+    channel_text = vkt.Text("### Tidal Entrance channel (berth 64 upto buoy 5 IS APPROX 2km)")
+    channel_depth = vkt.NumberField("Dredged depth CD", suffix="m", default=7.4)
+    transit_h = vkt.NumberField("Transit time ", suffix="hr", default=0, min=0)
 
     lb4 = vkt.LineBreak()
     tide_text = vkt.Text("### Tide")
