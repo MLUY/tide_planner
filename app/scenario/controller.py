@@ -147,7 +147,7 @@ def build_tide_cycles(res) -> go.Figure:
     for s in res.segments:
         fig.add_vrect(x0=s["start"], x1=s["finish"], fillcolor=COLORS[s["category"]],
                       opacity=0.3 if s["category"] in WAIT_CATEGORIES else 0.12,
-                      line_width=0, layer="below", row=1, col=1)
+                      line_width=0, layer="below", row=1, col=1, exclude_empty_subplots=False)
 
     # daily periods in which sailing in/out of the port is not allowed (grey band at the top)
     if res.restrictions:
@@ -159,7 +159,8 @@ def build_tide_cycles(res) -> go.Figure:
                     x0, x1 = day + timedelta(hours=a), day + timedelta(hours=b)
                     if x1 > times[0] and x0 < times[-1]:
                         fig.add_vrect(x0=x0, x1=x1, y0=0.93, y1=1.0, fillcolor="grey", opacity=0.35,
-                                      line_width=0, layer="below", row=1, col=1)
+                                      line_width=0, layer="below", row=1, col=1,
+                                      exclude_empty_subplots=False)
             day += timedelta(days=1)
         fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers", name="No sailing in/out (time restriction)",
                                  marker=dict(symbol="square", size=12, color="grey", opacity=0.5)),
