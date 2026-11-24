@@ -182,4 +182,4 @@ class Scenario(vkt.Controller):
 
     @vkt.PlotlyView("Tidal delay", duration_guess=2)
     def delay_view(self, params, **kwargs):
-        return vkt.PlotlyResult(json.loads(build_delay_curve(_run_plan(pa
+        return vkt.PlotlyResult(json.loads(build_delay_curve(_run_plan(params)).to_json()))
