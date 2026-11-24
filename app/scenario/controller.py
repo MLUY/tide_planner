@@ -12,7 +12,7 @@ from .planning import (DEFAULT_CYCLE, PHASE_TYPES, GateRule, Phase, PlanningErro
                        load_tide, plan_installation)
 
 COLORS = {"Port": "#8c564b", "Sailing": "#1f77b4", "Installation": "#2ca02c", "Tidal wait": "#d62728",
-          "Time restriction wait": "#ff7f0e"}
+          "Time restriction wait": "#e377c2"}
 WAIT_CATEGORIES = ("Tidal wait", "Time restriction wait")
 DEFAULT_TIDE = Path(__file__).resolve().parents[2] / "sample_data" / "gunsan_tide_2026_hourly.csv"
 
@@ -84,10 +84,11 @@ class Parametrization(vkt.Parametrization):
     tide_file = vkt.FileField("Tidal data (optional, default Gunsan 2026)", file_types=[".csv"])
 
     lb5 = vkt.LineBreak()
-    restriction_text = vkt.Text("### Time restrictions - port entry\n"
-                                "Daily periods in which the vessel may **not enter** the port (e.g. no night "
-                                "entry). The vessel waits outside until the period has ended, on top of the "
-                                "tidal window. A period may run past midnight (e.g. from 22 to 6). "
+    restriction_text = vkt.Text("### Time restrictions - sailing in/out of port\n"
+                                "Daily periods in which the vessel may **not sail in or out** of the port "
+                                "(e.g. no night transits). The vessel waits (alongside for departure, outside "
+                                "the port for entry) until the period has ended, on top of the tidal window. "
+                                "A period may run past midnight (e.g. from 22 to 6). "
                                 "Times in hours of the day, same time zone as the tidal data.")
     time_restrictions = vkt.Table("Time restrictions")
     time_restrictions.description = vkt.TextField("Description")
@@ -148,7 +149,7 @@ def build_tide_cycles(res) -> go.Figure:
                       opacity=0.3 if s["category"] in WAIT_CATEGORIES else 0.12,
                       line_width=0, layer="below", row=1, col=1)
 
-    # daily periods in which entering the port is not allowed (hatched grey band at the top)
+    # daily periods in which sailing in/out of the port is not allowed (grey band at the top)
     if res.restrictions:
         day = datetime.combine(times[0].date(), datetime.min.time())
         while day <= times[-1]:
@@ -160,7 +161,7 @@ def build_tide_cycles(res) -> go.Figure:
                         fig.add_vrect(x0=x0, x1=x1, y0=0.93, y1=1.0, fillcolor="grey", opacity=0.35,
                                       line_width=0, layer="below", row=1, col=1)
             day += timedelta(days=1)
-        fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers", name="No port entry (time restriction)",
+        fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers", name="No sailing in/out (time restriction)",
                                  marker=dict(symbol="square", size=12, color="grey", opacity=0.5)),
                       row=1, col=1)
 

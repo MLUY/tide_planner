@@ -30,12 +30,13 @@ Optionally a channel transit time can be set; the rule must then hold for that w
 - Cycle rows: any number of *In port* rows, one *Sail to site*, any number of *At site* rows, one *Sail to port*.
 - Tide datum is assumed to be the same as the channel depth datum (chart datum).
 
-## Time restrictions (port entry)
-On top of the tidal rule, daily periods can be defined in which the vessel may **not enter** the port
+## Time restrictions (sailing in/out of port)
+On top of the tidal rule, daily periods can be defined in which the vessel may **not sail in or out** of the port
 (table *Time restrictions*: description, not allowed from / until, hours of the day).
 - Example: `No night entry`, from 22 until 6 (periods may run past midnight).
-- The vessel waits outside the port until the restriction has ended **and** the tidal window is open.
+- Departure: the vessel waits alongside; entry: the vessel waits outside the port, until the
+  restriction has ended **and** the tidal window is open.
   If a transit time is set, no restriction may apply during the transit either.
 - The wait is split: the wait the tide alone would cause is *Tidal wait*, the extra wait is
-  *Time restriction wait* (orange in the charts; restricted periods shown as grey bands in *Tide and cycles*).
-- Departures are not affected. Times are in the same time zone as the tidal data.
+  *Time restriction wait* (pink in the charts; restricted periods shown as grey bands in *Tide and cycles*).
+- Times are in the same time zone as the tidal data.

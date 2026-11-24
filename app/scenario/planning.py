@@ -14,8 +14,9 @@ Pure Python (no VIKTOR imports) so it can be tested on its own.
   Entry: the vessel waits outside the port until the gate opens.
 * Tide is linearly interpolated between data points; rising/falling is the sign of the slope.
 * Time restrictions (optional): daily periods (e.g. 22:00-06:00) in which the vessel may not
-  enter the port. On top of the tidal window, the vessel waits outside until the restriction
-  has ended. Waiting caused by the tide and by a time restriction is reported separately.
+  sail in or out of the port. On top of the tidal window, the vessel waits (alongside for a
+  departure, outside the port for an entry) until the restriction has ended.
+  Waiting caused by the tide and by a time restriction is reported separately.
 """
 from __future__ import annotations
 
@@ -74,7 +75,8 @@ class GateRule:
 
 @dataclass
 class TimeRestriction:
-    """Daily period [from_h, to_h) (hours of the day, 0-24) in which the port may not be entered.
+    """Daily period [from_h, to_h) (hours of the day, 0-24) in which the vessel may not
+    sail in or out of the port.
     from_h > to_h means the period runs past midnight (e.g. 22 -> 6)."""
     description: str
     from_h: float
@@ -223,7 +225,7 @@ def validate_phases(phases: list[Phase]) -> None:
 
 
 def _gate(tide, rule, cycle, direction, t, cum, segs, gates, points, restrictions=()):
-    """Wait for the tidal window; for an entry also for the end of any time restriction.
+    """Wait for the tidal window and for the end of any time restriction.
     The tide-only wait is booked as tidal wait, the extra wait as time restriction wait."""
     where = "alongside in port" if direction == "Departure" else "outside the port"
     tidal = _wait_for_gate(tide, t, rule)
@@ -257,7 +259,7 @@ def _gate(tide, rule, cycle, direction, t, cum, segs, gates, points, restriction
 def plan_installation(*, start: datetime, phases: list[Phase], tide: TideCurve, rule: GateRule,
                       n_cycles: int, restrictions: list[TimeRestriction] | None = None) -> PlanResult:
     """Repeat the cycle n_cycles times from start.
-    restrictions: daily periods in which the port may not be entered (applied to the entry only)."""
+    restrictions: daily periods in which the vessel may not sail in or out (departure and entry)."""
     restrictions = list(restrictions or [])
     validate_phases(phases)
     validate_restrictions(restrictions)
@@ -278,7 +280,8 @@ def plan_installation(*, start: datetime, phases: list[Phase], tide: TideCurve, 
         try:
             for ph in phases:
                 if ph.type == TYPE_OUT:
-                    t, cum = _gate(tide, rule, cycle, "Departure", t, cum, c_segs, c_gates, c_points)
+                    t, cum = _gate(tide, rule, cycle, "Departure", t, cum, c_segs, c_gates, c_points,
+                                   restrictions)
                 fin = t + timedelta(hours=ph.hours)
                 if tide.to_hours(fin) > tide.hours[-1]:
                     raise _DataEnd()
