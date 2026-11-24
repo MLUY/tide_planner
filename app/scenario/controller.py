@@ -134,8 +134,8 @@ def build_gantt(res) -> go.Figure:
     fig.update_xaxes(rangeslider_visible=True)
     fig.update_layout(
         title=(f"{res.cycles} cycles | nominal cycle {res.nominal_cycle_h:.0f} h | "
-               f"finish {res.finish:%Y-%m-%d %H:%M} | {_delay_text(res)}"),
-        height=480, margin=dict(l=220, t=60), legend_title_text="")
+               f"finish {res.finish:%Y-%m-%d %H:%M}<br>{_delay_text(res).capitalize()}"),
+        height=520, margin=dict(l=220, t=110), legend_title_text="")
     return fig
 
 
