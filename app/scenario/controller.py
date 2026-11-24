@@ -123,7 +123,7 @@ def _delay_text(res) -> str:
     return txt
 
 
-def build_gantt(res) -> go.Figure:
+def build_gantt(res, vessel: str = "") -> go.Figure:
     order = []
     for s in res.segments:
         if s["activity"] not in order:
@@ -135,7 +135,7 @@ def build_gantt(res) -> go.Figure:
     fig.update_yaxes(categoryorder="array", categoryarray=order[::-1], title_text="")
     fig.update_xaxes(rangeslider_visible=True)
     fig.update_layout(
-        title=(f"{res.cycles} cycles | nominal cycle {res.nominal_cycle_h:.0f} h | "
+        title=(f"{vessel + ' | ' if vessel else ''}{res.cycles} cycles | nominal cycle {res.nominal_cycle_h:.0f} h | "
                f"finish {res.finish:%Y-%m-%d %H:%M}<br>{_delay_text(res).capitalize()}"),
         height=520, margin=dict(l=220, t=110), legend_title_text="")
     return fig
@@ -252,7 +252,8 @@ def build_cycle_table(res) -> go.Figure:
 
 def _export_inputs(params) -> dict:
     return dict(
-        general=[("Start date", datetime.combine(params.start_date, datetime.min.time())
+        general=[("Vessel", (params.vessel_name or "").strip(), ""),
+                 ("Start date", datetime.combine(params.start_date, datetime.min.time())
                   + timedelta(hours=float(params.start_hour or 0)), ""),
                  ("Number of cycles", int(params.n_cycles or 0), ""),
                  ("Vessel draft", float(params.draft or 0), "m"),
@@ -279,7 +280,7 @@ class Scenario(vkt.Controller):
 
     @vkt.PlotlyView("Planning (Gantt)", duration_guess=2)
     def gantt_view(self, params, **kwargs):
-        return vkt.PlotlyResult(json.loads(build_gantt(_run_plan(params)).to_json()))
+        return vkt.PlotlyResult(json.loads(build_gantt(_run_plan(params), (params.vessel_name or "").strip()).to_json()))
 
     @vkt.PlotlyView("Tide and cycles", duration_guess=3)
     def tide_cycles_view(self, params, **kwargs):
