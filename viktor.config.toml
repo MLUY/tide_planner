@@ -3,4 +3,4 @@
 
 app_type = 'tree'
 python_version = '3.13'
-registered_name = 'monopile-tide-planner'
+registered_name = 'tidal_planner'

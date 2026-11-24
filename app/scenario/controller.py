@@ -57,7 +57,7 @@ _RESTRICT_ON = vkt.IsEqual(vkt.Lookup("use_time_restrictions"), RESTRICT_YES)
 
 
 class Parametrization(vkt.Parametrization):
-    title = vkt.Text("## Monopile installation - tidal planning (Bokalift 2)")
+    title = vkt.Text("##  Tidal planner")
     download_excel = vkt.DownloadButton("Download planning (Excel)", method="download_excel",
                                         description="All activities (from - to, type of delay), cycles, "
                                                     "departures/entries and tidal data in one Excel file.")
@@ -77,6 +77,8 @@ class Parametrization(vkt.Parametrization):
 
     lb2 = vkt.LineBreak()
     vessel_text = vkt.Text("### Vessel")
+    vessel_name = vkt.TextField("Vessel Name", default="Bokalift 2",
+                                    flex=100)
     draft = vkt.NumberField("Vessel draft", suffix="m", default=11.0)
     keel_clearance = vkt.NumberField("Keel clearance", suffix="m", default=0.0, min=0)
 
