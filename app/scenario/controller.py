@@ -25,7 +25,8 @@ def _run_plan(params):
     start = datetime.combine(params.start_date, datetime.min.time()) + timedelta(hours=float(params.start_hour or 0))
     try:
         tide = load_tide(params.tide_file.file.getvalue_binary())
-        return plan_installation(start=start, phases=phases, tide=tide, rule=rule)
+        return plan_installation(start=start, phases=phases, tide=tide, rule=rule,
+                                 n_cycles=int(params.n_cycles or 0))
     except PlanningError as exc:
         raise vkt.UserError(str(exc))
 
@@ -41,9 +42,10 @@ class Parametrization(vkt.Parametrization):
     title = vkt.Text("## Monopile installation - tidal planning (Bokalift 2)")
     start_date = vkt.DateField("Start date")
     start_hour = vkt.NumberField("Start time (hour of day)", default=0, min=0, max=23.99, suffix="h")
+    n_cycles = vkt.IntegerField("Number of cycles", default=10, min=1)
 
     lb1 = vkt.LineBreak()
-    cycle_text = vkt.Text("**Cycle without tidal restriction** (repeats from the start until the tidal data ends). "
+    cycle_text = vkt.Text("**Cycle without tidal restriction** (repeated for the number of cycles above). "
                           "The port is left at the start of *Sail to site* and entered at the end of *Sail to port*.")
     cycle = vkt.DynamicArray("Cycle phases", min=4, default=DEFAULT_CYCLE)
     cycle.phase = vkt.TextField("Phase", flex=45)
@@ -156,7 +158,6 @@ def build_cycle_table(res) -> go.Figure:
 class Scenario(vkt.Controller):
     label = "Scenario"
     parametrization = Parametrization
-
 
     @vkt.PlotlyView("Planning (Gantt)", duration_guess=2)
     def gantt_view(self, params, **kwargs):

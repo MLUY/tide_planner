@@ -2,8 +2,7 @@
 Planning engine for a tide-restricted monopile installation campaign.
 Pure Python (no VIKTOR imports) so it can be tested on its own.
 
-* The cycle repeats from the start date/time until the tidal data runs out.
-  Only complete cycles are kept.
+* The cycle is repeated n_cycles times from the start date/time.
 * Cycle row types:
     "In port"      : loading etc. (no tidal restriction)
     "Sail to site" : starts with leaving the port  -> departure gate
@@ -183,9 +182,12 @@ def _gate(tide, rule, cycle, direction, t, cum, segs, gates, points):
     return t, cum
 
 
-def plan_installation(*, start: datetime, phases: list[Phase], tide: TideCurve, rule: GateRule) -> PlanResult:
-    """Repeat the cycle from start until the tidal data ends; keep only complete cycles."""
+def plan_installation(*, start: datetime, phases: list[Phase], tide: TideCurve, rule: GateRule,
+                      n_cycles: int) -> PlanResult:
+    """Repeat the cycle n_cycles times from start."""
     validate_phases(phases)
+    if n_cycles < 1:
+        raise PlanningError("Number of cycles must be at least 1.")
     if start < tide.t0:
         raise PlanningError(f"Tidal data starts {tide.t0:%Y-%m-%d %H:%M}, after the start "
                             f"{start:%Y-%m-%d %H:%M}. Use a later start or a tidal file that covers it.")
@@ -194,7 +196,7 @@ def plan_installation(*, start: datetime, phases: list[Phase], tide: TideCurve, 
     segments, gates, points, stats = [], [], [(start, 0.0)], []
 
     cycle = 0
-    while True:
+    while cycle < n_cycles:
         cycle += 1
         c_start, c_cum = t, cum
         c_segs, c_gates, c_points = [], [], []
@@ -211,17 +213,13 @@ def plan_installation(*, start: datetime, phases: list[Phase], tide: TideCurve, 
                 if ph.type == TYPE_IN:
                     t, cum = _gate(tide, rule, cycle, "Entry", t, cum, c_segs, c_gates, c_points)
         except _DataEnd:
-            t, cum = c_start, c_cum      # drop the unfinished cycle
-            break
+            raise PlanningError(f"Tidal data ends {tide.end:%Y-%m-%d %H:%M} during cycle {cycle}. "
+                                f"Use fewer cycles, an earlier start or a longer tidal file.")
         segments += c_segs
         gates += c_gates
         points += c_points
         stats.append(dict(cycle=cycle, start=c_start, finish=t,
                           hours=(t - c_start).total_seconds() / 3600, wait_h=cum - c_cum))
-
-    if not stats:
-        raise PlanningError(f"Not even one full cycle fits between the start and the end of the tidal data "
-                            f"({tide.end:%Y-%m-%d %H:%M}). Use an earlier start or a longer tidal file.")
 
     points.append((t, cum))
     return PlanResult(segments=segments, gates=gates, delay_points=points, cycles=len(stats),
