@@ -7,6 +7,7 @@ Sheets
   Cycles            one row per cycle (same as the Cycle table view)
   Departures-Entries every port gate with tide level and the waits split by cause
   Tide data         tidal data over the planning period with window / restriction status
+  Weather downtime  (only when monthly workability is applied) nett / gross per calendar month
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from .downtime import MONTHS
 from .planning import CAT_RESTRICT, CAT_WAIT, PlanResult
 
 DT = "yyyy-mm-dd hh:mm"
@@ -70,7 +72,7 @@ def _table(ws, names: list[str], rows: list[list], formats: dict[int, str] | Non
         ws.column_dimensions[get_column_letter(i)].width = w
 
 
-def _summary(ws, res: PlanResult, inputs: dict) -> None:
+def _summary(ws, res: PlanResult, inputs: dict, dur=None) -> None:
     ws["A1"] = "Monopile installation - tidal planning"
     ws["A1"].font = TITLE_FONT
     row = 3
@@ -102,6 +104,28 @@ def _summary(ws, res: PlanResult, inputs: dict) -> None:
     line("  of which tidal", _h(res.total_tidal_wait_h), "0.0", "h")
     line("  of which time restriction", _h(res.total_restriction_wait_h), "0.0", "h")
     row += 1
+
+    if dur is not None:
+        section("Total project duration")
+        line("Nominal cycle (no delays)", _h(dur.nominal_cycle_h), "0.0", "h")
+        line("Nett duration per cycle (incl. tidal / time restriction waits)", _h(dur.nett_cycle_h), "0.0", "h")
+        line("Number of cycles", dur.n_cycles)
+        line("Total nett duration", _h(dur.nett_total_h), "0.0", "h")
+        line("Total nett duration", round(dur.nett_total_h / 24, 2), "0.0", "days")
+        line("Weather downtime norm", f"{dur.norm.name} (MWS {dur.norm.mws_h:g} hr)" if dur.norm
+             else "None - gross = nett")
+        line("Weather downtime", _h(dur.downtime_h), "0.0", "h")
+        line("Total gross duration", _h(dur.gross_total_h), "0.0", "h")
+        line("Total gross duration", round(dur.gross_total_h / 24, 2), "0.0", "days")
+        line("Finish (gross)", dur.gross_finish, DT)
+        if dur.norm:
+            ws.cell(row=row, column=1, value="Workability per month (%)")
+            row += 1
+            for m, pct in zip(MONTHS, dur.norm.monthly_pct):
+                line(f"  {m}", pct, "0.0", "%")
+            if dur.norm.year_pct is not None:
+                line("  Year (SME)", dur.norm.year_pct, "0.0", "%")
+        row += 1
 
     section("Inputs")
     for label, value, unit in inputs.get("general", []):
@@ -223,16 +247,32 @@ def _tide(ws, res: PlanResult) -> None:
         c.fill = green if c.value == "Yes" else red
 
 
-def build_excel(res: PlanResult, inputs: dict | None = None) -> bytes:
+def _downtime(ws, dur) -> None:
+    rows = [[m["month"], m["start"], m["start"] + timedelta(hours=m["gross_h"]), m["pct"], _h(m["gross_h"]),
+             _h(m["nett_h"]), _h(m["downtime_h"])] for m in dur.months]
+    _table(ws, ["Month", "From", "To", "Workability (%)", "Gross (h)", "Nett work (h)", "Weather downtime (h)"],
+           rows, formats={0: "mmm yyyy", 1: DT, 2: DT, 3: "0.0", 4: HOURS, 5: HOURS, 6: HOURS},
+           widths=[11, 17, 17, 13, 10, 12, 14])
+    n = len(rows) + 1
+    ws.cell(row=n + 1, column=1, value="Total").font = Font(bold=True)
+    for col in (5, 6, 7):
+        L = get_column_letter(col)
+        c = ws.cell(row=n + 1, column=col, value=f"=SUM({L}2:{L}{n})")
+        c.number_format, c.font = HOURS, Font(bold=True)
+
+
+def build_excel(res: PlanResult, inputs: dict | None = None, duration=None) -> bytes:
     """inputs: {'general': [(label, value, unit)], 'phases': [(name, type, hours)], 'tide_source': str}"""
     wb = Workbook()
     ws = wb.active
     ws.title = "Summary"
-    _summary(ws, res, inputs or {})
+    _summary(ws, res, inputs or {}, duration)
     _activities(wb.create_sheet("Activities"), res)
     _cycles(wb.create_sheet("Cycles"), res)
     _gates(wb.create_sheet("Departures-Entries"), res)
     _tide(wb.create_sheet("Tide data"), res)
+    if duration is not None and duration.norm is not None:
+        _downtime(wb.create_sheet("Weather downtime"), duration)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

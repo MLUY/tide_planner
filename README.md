@@ -47,3 +47,16 @@ from / until, hours of the day). With **No** (default) the table is hidden and i
 - The wait is split: the wait the tide alone would cause is *Tidal wait*, the extra wait is
   *Time restriction wait* (pink in the charts; restricted periods shown as grey bands in *Tide and cycles*).
 - Times are in the same time zone as the tidal data.
+
+## Weather downtime (monthly workability, SME)
+Optional (*Apply monthly downtime percentages?* = Yes). Table with one row per norm: name, MWS window (hr),
+workability % for Jan..Dec and the yearly value from the Site Metocean Report. Pre-filled with
+BL2 General (6 hr), BL2 MP Installation Best (10 hr) and BL2 MP Installation Worst (10 hr).
+Select the norm that is the basis for the downtime of the operational cycle.
+
+## Total project duration
+Section in the inputs, view **Project duration** and Excel (Summary + sheet *Weather downtime*):
+- Nett duration per cycle = average planned cycle incl. tidal and time restriction waits (nominal cycle shown for reference).
+- Total nett duration = number of cycles x nett duration per cycle.
+- Total gross duration: walking month by month from the start, each nett hour in a month with workability w
+  takes 1 / w gross hours. Without monthly downtime, gross = nett.

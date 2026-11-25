@@ -8,6 +8,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import viktor as vkt
 
+from .downtime import (MONTH_KEYS, MONTHS, DowntimeError, Norm, default_table_rows,
+                       project_duration)
 from .export import build_excel
 from .planning import (DEFAULT_CYCLE, PHASE_TYPES, GateRule, Phase, PlanningError, TimeRestriction,
                        load_tide, plan_installation)
@@ -16,6 +18,7 @@ COLORS = {"Port": "#8c564b", "Sailing": "#1f77b4", "Installation": "#2ca02c", "T
           "Time restriction wait": "#e377c2"}
 WAIT_CATEGORIES = ("Tidal wait", "Time restriction wait")
 RESTRICT_NO, RESTRICT_YES = "No", "Yes"
+DEFAULT_DOWNTIME_NORM = "BL2 MP Installation Best"
 DEFAULT_TIDE = Path(__file__).resolve().parents[2] / "sample_data" / "gunsan_tide_2026_hourly.csv"
 
 
@@ -54,6 +57,65 @@ def _run_plan(params):
 
 
 _RESTRICT_ON = vkt.IsEqual(vkt.Lookup("use_time_restrictions"), RESTRICT_YES)
+_DOWNTIME_ON = vkt.IsEqual(vkt.Lookup("use_downtime"), RESTRICT_YES)
+_PLAN_CACHE: dict = {}
+
+
+def _plan_cached(params):
+    """The output fields all need the planning; compute it once per set of inputs."""
+    key = json.dumps(params, default=str, sort_keys=True)
+    if key not in _PLAN_CACHE:
+        if len(_PLAN_CACHE) > 20:
+            _PLAN_CACHE.clear()
+        _PLAN_CACHE[key] = _run_plan(params)
+    return _PLAN_CACHE[key]
+
+
+def _norm_rows(params):
+    return [r for r in (params.downtime_norms or []) if (r.norm or "").strip()]
+
+
+def _norm_options(params, **kwargs):
+    return [r.norm.strip() for r in _norm_rows(params)] or [default_table_rows()[0]["norm"]]
+
+
+def _selected_norm(params):
+    if params.use_downtime != RESTRICT_YES:
+        return None
+    rows = _norm_rows(params)
+    if not rows:
+        raise vkt.UserError("Monthly downtime is switched on, but the norm table is empty.")
+    chosen = (params.downtime_norm or "").strip()
+    row = next((r for r in rows if r.norm.strip() == chosen), None)
+    if row is None:
+        raise vkt.UserError("Select the norm that is the basis for the weather downtime.")
+    return Norm(name=row.norm.strip(), mws_h=float(row.mws_h or 0),
+                monthly_pct=[None if row[k] is None else float(row[k]) for k in MONTH_KEYS],
+                year_pct=None if row.year is None else float(row.year))
+
+
+def _duration(params, res=None):
+    res = res or _plan_cached(params)
+    nett_cycle = sum(c["hours"] for c in res.cycle_stats) / len(res.cycle_stats)
+    try:
+        return project_duration(start=res.start, n_cycles=res.cycles, nett_cycle_h=nett_cycle,
+                                nominal_cycle_h=res.nominal_cycle_h, norm=_selected_norm(params))
+    except DowntimeError as exc:
+        raise vkt.UserError(str(exc))
+
+
+def _out(fn):
+    """Output field callback that shows '-' instead of an error while inputs are incomplete."""
+    def callback(params, **kwargs):
+        try:
+            return fn(_duration(params))
+        except Exception:  # noqa: BLE001
+            return "-"
+    return callback
+
+
+def _fmt_h(h):
+    return f"{h:,.1f} h ({h / 24:,.1f} days)"
 
 
 class Parametrization(vkt.Parametrization):
@@ -113,6 +175,41 @@ class Parametrization(vkt.Parametrization):
     time_restrictions.description = vkt.TextField("Description")
     time_restrictions.from_h = vkt.NumberField("Not allowed from", suffix="h", min=0, max=24)
     time_restrictions.to_h = vkt.NumberField("Not allowed until", suffix="h", min=0, max=24)
+
+    lb6 = vkt.LineBreak()
+    downtime_title = vkt.Text("### Weather downtime - monthly workability (SME)")
+    use_downtime = vkt.OptionField("Apply monthly downtime percentages?", options=[RESTRICT_NO, RESTRICT_YES],
+                                   default=RESTRICT_NO)
+    downtime_text = vkt.Text("Workability per month from the Site Metocean Report (SME): the percentage of time "
+                             "in which the operation can be performed within the MWS weather window. "
+                             "One row per norm; add or edit rows as needed. "
+                             "The selected norm is applied to the whole operational cycle.",
+                             visible=_DOWNTIME_ON)
+    downtime_norms = vkt.Table("Workability norms (%)", default=default_table_rows(), visible=_DOWNTIME_ON)
+    downtime_norms.norm = vkt.TextField("Norm")
+    downtime_norms.mws_h = vkt.NumberField("MWS window", suffix="hr", min=0)
+    for _key, _label in zip(MONTH_KEYS, MONTHS):
+        setattr(downtime_norms, _key, vkt.NumberField(_label, suffix="%", min=0, max=100))
+    del _key, _label
+    downtime_norms.year = vkt.NumberField("Year", suffix="%", min=0, max=100)
+    downtime_norm = vkt.OptionField("Norm used as basis for the downtime", options=_norm_options,
+                                    default=DEFAULT_DOWNTIME_NORM, visible=_DOWNTIME_ON, flex=60)
+
+    lb7 = vkt.LineBreak()
+    duration_title = vkt.Text("### Total project duration")
+    out_nominal = vkt.OutputField("Nominal cycle (no delays)", value=_out(lambda d: _fmt_h(d.nominal_cycle_h)),
+                                  flex=50)
+    out_nett_cycle = vkt.OutputField("Nett duration per cycle (incl. tidal / time restriction waits)",
+                                     value=_out(lambda d: _fmt_h(d.nett_cycle_h)), flex=50)
+    out_nett_total = vkt.OutputField("Total nett duration (cycles x nett per cycle)",
+                                     value=_out(lambda d: f"{d.n_cycles} x {d.nett_cycle_h:.1f} h = "
+                                                          f"{_fmt_h(d.nett_total_h)}"), flex=100)
+    out_gross_total = vkt.OutputField("Total gross duration (incl. weather downtime)",
+                                      value=_out(lambda d: _fmt_h(d.gross_total_h)
+                                                 + (f" - norm {d.norm.name}, downtime {d.downtime_h:,.1f} h"
+                                                    if d.norm else " - no downtime applied")), flex=100)
+    out_finish = vkt.OutputField("Finish (gross)", value=_out(lambda d: f"{d.gross_finish:%Y-%m-%d %H:%M}"),
+                                 flex=50)
 
 
 def _delay_text(res) -> str:
@@ -250,6 +347,42 @@ def build_cycle_table(res) -> go.Figure:
     return fig
 
 
+def build_duration(d) -> go.Figure:
+    rows = [("Nominal cycle (no delays)", _fmt_h(d.nominal_cycle_h)),
+            ("Nett duration per cycle (incl. tidal / time restriction waits)", _fmt_h(d.nett_cycle_h)),
+            ("Number of cycles", f"{d.n_cycles}"),
+            ("Total nett duration", f"{d.n_cycles} x {d.nett_cycle_h:.1f} h = {_fmt_h(d.nett_total_h)}"),
+            ("Weather downtime norm", f"{d.norm.name} (MWS {d.norm.mws_h:g} hr)" if d.norm else "None (not applied)"),
+            ("Weather downtime", _fmt_h(d.downtime_h)),
+            ("Total gross duration", _fmt_h(d.gross_total_h)),
+            ("Effective workability", f"{d.effective_pct:.1f} %"),
+            ("Start", f"{d.start:%Y-%m-%d %H:%M}"),
+            ("Finish nett / gross", f"{d.nett_finish:%Y-%m-%d %H:%M}  /  {d.gross_finish:%Y-%m-%d %H:%M}")]
+    if not d.norm:
+        fig = go.Figure(go.Table(columnwidth=[3, 4], header=dict(values=["Project duration", ""], align="left"),
+                                 cells=dict(values=[[r[0] for r in rows], [r[1] for r in rows]], align="left")))
+        fig.update_layout(title="Total project duration - no weather downtime applied (gross = nett)", height=450)
+        return fig
+    fig = make_subplots(rows=2, cols=1, row_heights=[0.5, 0.5], vertical_spacing=0.08,
+                        specs=[[{"type": "table"}], [{"type": "xy"}]])
+    fig.add_trace(go.Table(columnwidth=[3, 4], header=dict(values=["Project duration", ""], align="left"),
+                           cells=dict(values=[[r[0] for r in rows], [r[1] for r in rows]], align="left")),
+                  row=1, col=1)
+    labels = [f"{m['month']:%b %Y}" for m in d.months]
+    fig.add_trace(go.Bar(x=labels, y=[m["nett_h"] for m in d.months], name="Working (nett)",
+                         marker_color=COLORS["Installation"],
+                         text=[f"{m['pct']:.1f} %" for m in d.months], textposition="inside",
+                         hovertemplate="%{x}: %{y:.1f} h nett<extra></extra>"), row=2, col=1)
+    fig.add_trace(go.Bar(x=labels, y=[m["downtime_h"] for m in d.months], name="Weather downtime",
+                         marker_color="#7f7f7f", hovertemplate="%{x}: %{y:.1f} h downtime<extra></extra>"),
+                  row=2, col=1)
+    fig.update_yaxes(title_text="Hours", row=2, col=1)
+    fig.update_layout(barmode="stack", height=750, legend_title_text="",
+                      title=f"Total project duration - nett {d.nett_total_h / 24:.1f} days, gross "
+                            f"{d.gross_total_h / 24:.1f} days ({d.norm.name})")
+    return fig
+
+
 def _export_inputs(params) -> dict:
     return dict(
         general=[("Vessel", (params.vessel_name or "").strip(), ""),
@@ -276,7 +409,11 @@ class Scenario(vkt.Controller):
     def download_excel(self, params, **kwargs):
         res = _run_plan(params)
         name = f"tide_planning_{res.start:%Y%m%d}_{res.cycles}cycles.xlsx"
-        return vkt.DownloadResult(build_excel(res, _export_inputs(params)), name)
+        return vkt.DownloadResult(build_excel(res, _export_inputs(params), _duration(params, res)), name)
+
+    @vkt.PlotlyView("Project duration", duration_guess=2)
+    def duration_view(self, params, **kwargs):
+        return vkt.PlotlyResult(json.loads(build_duration(_duration(params, _run_plan(params))).to_json()))
 
     @vkt.PlotlyView("Planning (Gantt)", duration_guess=2)
     def gantt_view(self, params, **kwargs):
