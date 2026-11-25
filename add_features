@@ -15,3 +15,6 @@ provide the cycle time duration the nett duration per cycle
 provide the number of cycles x nett duration per cycle total nett duration
 provide the total gross duration applying the correct workabilty percentages
 if there is no optional selection of monthly percentaqes gross duration is the same as nett duration
+
+also add another feature that the tidal data for one year will be the same for each other year
+in this case the tidal data will never run out this needs to be a note in small print below the data file upload.
