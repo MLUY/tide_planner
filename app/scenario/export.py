@@ -30,7 +30,7 @@ TITLE_FONT = Font(bold=True, size=14)
 SECTION_FONT = Font(bold=True, size=11, color="1F4E78")
 # light versions of the chart colours
 FILLS = {"Port": "E8D9D5", "Sailing": "D2E3F1", "Installation": "D5EDD5",
-         CAT_WAIT: "F7D0D0", CAT_RESTRICT: "F9DDEF", CAT_WEATHER: "DDDDDD"}
+         CAT_WAIT: "F7D0D0", CAT_RESTRICT: "F9DDEF", CAT_WEATHER: "D1F2F5"}
 DELAY_TYPE = {CAT_WAIT: "Tidal", CAT_RESTRICT: "Time restriction", CAT_WEATHER: "Weather"}
 
 

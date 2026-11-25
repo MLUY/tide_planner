@@ -16,7 +16,7 @@ from .planning import (DEFAULT_CYCLE, PHASE_TYPES, GateRule, Phase, PlanningErro
                        load_tide, plan_installation)
 
 COLORS = {"Port": "#8c564b", "Sailing": "#1f77b4", "Installation": "#2ca02c", "Tidal wait": "#d62728",
-          "Time restriction wait": "#e377c2", "Weather downtime": "#7f7f7f"}
+          "Time restriction wait": "#e377c2", "Weather downtime": "#17becf"}
 WAIT_CATEGORIES = ("Tidal wait", "Time restriction wait", "Weather downtime")
 RESTRICT_NO, RESTRICT_YES = "No", "Yes"
 BASIS_GROSS, BASIS_NETT = "Gross (incl. weather downtime)", "Nett (excl. weather downtime)"
@@ -426,22 +426,33 @@ def build_duration(d) -> go.Figure:
                      cells=dict(values=[[r[0] for r in rows], [r[1] for r in rows]], align="left"))
     if not d.norm:
         fig = go.Figure(table)
-        fig.update_layout(title="Total project duration - no weather downtime applied (gross = nett)", height=480)
+        fig.update_layout(title="Total project duration - no weather downtime applied (gross = nett)", height=420,
+                          margin=dict(t=60, b=20, l=60, r=20))
         return fig
-    fig = make_subplots(rows=2, cols=1, row_heights=[0.5, 0.5], vertical_spacing=0.08,
+    # table on top (fixed height so all rows are visible), compact bar chart below
+    fig = make_subplots(rows=2, cols=1, row_heights=[0.56, 0.44], vertical_spacing=0.04,
                         specs=[[{"type": "table"}], [{"type": "xy"}]])
     fig.add_trace(table, row=1, col=1)
-    labels = [f"{m['month']:%b %Y}" for m in d.months]
-    fig.add_trace(go.Bar(x=labels, y=[m["downtime_h"] for m in d.months], name="Weather downtime",
-                         marker_color=COLORS["Weather downtime"],
-                         text=[f"{m['pct']:.1f} % | {m['cycles']} cycle(s)" for m in d.months],
-                         textposition="outside",
-                         hovertemplate="%{x}: %{y:.1f} h weather downtime<extra></extra>"), row=2, col=1)
-    fig.update_yaxes(title_text="Weather downtime (h)", row=2, col=1)
-    fig.update_layout(height=780, legend_title_text="", showlegend=False,
+    # month, workability and number of cycles under the bar; the days inside the bar (always horizontal)
+    labels = [f"<b>{m['month']:%b %Y}</b><br>{m['pct']:.1f} % | {m['cycles']} cycle{'s' if m['cycles'] != 1 else ''}"
+              for m in d.months]
+    fig.add_trace(go.Bar(
+        x=labels, y=[m["downtime_h"] / 24 for m in d.months], name="Weather downtime",
+        marker=dict(color=COLORS["Weather downtime"], line=dict(width=0)), opacity=0.85,
+        text=[f"<b>{m['downtime_h'] / 24:.1f} d</b>" for m in d.months],
+        textposition="inside", insidetextanchor="middle", textangle=0, constraintext="none",
+        textfont=dict(color="white", size=14),
+        customdata=[[m["downtime_h"], m["pct"], m["cycles"]] for m in d.months],
+        hovertemplate="%{x}: %{y:.1f} days (%{customdata[0]:.1f} h) weather downtime<br>"
+                      "workability %{customdata[1]:.1f} %, %{customdata[2]} cycle(s)<extra></extra>"),
+        row=2, col=1)
+    fig.update_yaxes(title_text="Days", rangemode="tozero", row=2, col=1)
+    fig.update_xaxes(tickfont=dict(size=11), row=2, col=1)
+    fig.update_layout(height=640, margin=dict(t=80, b=20, l=60, r=20), showlegend=False, bargap=0.2,
+                      uniformtext=dict(minsize=11, mode="show"),
                       title=f"Total project duration - nett {d.nett_total_h / 24:.1f} days, gross "
                             f"{d.gross_total_h / 24:.1f} days ({d.norm.name})<br><sup>Weather downtime per month "
-                            f"(by arrival at site); label = workability of that month and number of cycles</sup>")
+                            f"(month of arrival at site) - label: workability of the month and number of cycles</sup>")
     return fig
 
 
