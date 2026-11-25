@@ -40,6 +40,7 @@ TYPE_ORDER = {t: i for i, t in enumerate(PHASE_TYPES)}
 CATEGORY = {TYPE_PORT: "Port", TYPE_OUT: "Sailing", TYPE_SITE: "Installation", TYPE_IN: "Sailing"}
 CAT_WAIT = "Tidal wait"
 CAT_RESTRICT = "Time restriction wait"
+CAT_WEATHER = "Weather downtime"
 
 # Bokalift 2 default cycle (no tidal restriction)
 DEFAULT_CYCLE = [
@@ -114,6 +115,8 @@ class PlanResult:
     restrictions: list = field(default_factory=list)
     total_tidal_wait_h: float = 0.0
     total_restriction_wait_h: float = 0.0
+    total_weather_h: float = 0.0
+    weather: object = None          # norm used for weather downtime (gross planning), None = nett planning
 
 
 class TideCurve:
@@ -303,9 +306,14 @@ def _gate(tide, rule, cycle, direction, t, cum, segs, gates, points, restriction
 
 
 def plan_installation(*, start: datetime, phases: list[Phase], tide: TideCurve, rule: GateRule,
-                      n_cycles: int, restrictions: list[TimeRestriction] | None = None) -> PlanResult:
+                      n_cycles: int, restrictions: list[TimeRestriction] | None = None,
+                      weather=None) -> PlanResult:
     """Repeat the cycle n_cycles times from start.
     restrictions: daily periods in which the vessel may not sail in or out (departure and entry).
+    weather: optional norm (.name, .mws_h, .monthly_pct = 12 workability %) -> gross planning:
+        on arrival at site the vessel waits on weather for
+        (working hours of the cycle) x (100 / workability of that month - 1);
+        the tidal windows are then planned on this later timeline.
     With at least one year of tidal data, the data is repeated for other years as far as needed."""
     restrictions = list(restrictions or [])
     validate_phases(phases)
@@ -318,7 +326,7 @@ def plan_installation(*, start: datetime, phases: list[Phase], tide: TideCurve, 
             raise PlanningError(f"Tidal data starts {tide.t0:%Y-%m-%d %H:%M}, after the start "
                                 f"{start:%Y-%m-%d %H:%M}. Use a later start or a tidal file that covers it "
                                 f"(a file of at least one year is repeated for other years automatically).")
-        return _plan(start, phases, tide, rule, n_cycles, restrictions)
+        return _plan(start, phases, tide, rule, n_cycles, restrictions, weather=weather)
 
     # first guess of the period needed; doubled when the schedule runs past it
     nominal = sum(p.hours for p in phases)
@@ -326,13 +334,21 @@ def plan_installation(*, start: datetime, phases: list[Phase], tide: TideCurve, 
     for _ in range(12):
         curve = tide.repeated_to_cover(start, start + timedelta(hours=horizon_h + MAX_WAIT_H))
         try:
-            return _plan(start, phases, curve, rule, n_cycles, restrictions, raise_data_end=True)
+            return _plan(start, phases, curve, rule, n_cycles, restrictions, raise_data_end=True,
+                         weather=weather)
         except _DataEnd:
             horizon_h *= 2
     raise PlanningError("The planning is too long (more than 100 years); check the number of cycles.")
 
 
-def _plan(start, phases, tide, rule, n_cycles, restrictions, raise_data_end=False) -> PlanResult:
+def _weather_wait(weather, t: datetime, work_h: float) -> tuple[float, float]:
+    """(downtime hours, workability %) for a cycle with work_h working hours arriving at site at t."""
+    pct = float(weather.monthly_pct[t.month - 1])
+    return round(work_h * (100.0 / pct - 1.0) * 60) / 60, pct   # whole minutes
+
+
+def _plan(start, phases, tide, rule, n_cycles, restrictions, raise_data_end=False, weather=None) -> PlanResult:
+    work_h = float(sum(p.hours for p in phases))
     t, cum = start, 0.0
     segments, gates, points, stats = [], [], [(start, 0.0)], []
 
@@ -352,6 +368,20 @@ def _plan(start, phases, tide, rule, n_cycles, restrictions, raise_data_end=Fals
                 c_segs.append(dict(cycle=cycle, activity=ph.name, category=CATEGORY[ph.type],
                                    detail="", start=t, finish=fin, hours=ph.hours))
                 t = fin
+                if ph.type == TYPE_OUT and weather is not None:
+                    wait, pct = _weather_wait(weather, t, work_h)
+                    if wait > 1e-9:
+                        fin = t + timedelta(hours=wait)
+                        if tide.to_hours(fin) > tide.hours[-1]:
+                            raise _DataEnd()
+                        c_points.append((t, cum))
+                        c_segs.append(dict(
+                            cycle=cycle, activity="Weather downtime (at site)", category=CAT_WEATHER,
+                            detail=(f"Waiting on weather at site: {weather.name}, {t:%b} workability {pct:.1f} % "
+                                    f"-> {work_h:.1f} h work x (100/{pct:.1f} - 1)"),
+                            start=t, finish=fin, hours=wait, workability_pct=pct))
+                        t, cum = fin, cum + wait
+                        c_points.append((t, cum))
                 if ph.type == TYPE_IN:
                     t, cum = _gate(tide, rule, cycle, "Entry", t, cum, c_segs, c_gates, c_points,
                                    restrictions)
@@ -367,7 +397,8 @@ def _plan(start, phases, tide, rule, n_cycles, restrictions, raise_data_end=Fals
         stats.append(dict(cycle=cycle, start=c_start, finish=t,
                           hours=(t - c_start).total_seconds() / 3600, wait_h=cum - c_cum,
                           tidal_wait_h=sum(g["tidal_wait_h"] for g in c_gates),
-                          restriction_wait_h=sum(g["restriction_wait_h"] for g in c_gates)))
+                          restriction_wait_h=sum(g["restriction_wait_h"] for g in c_gates),
+                          weather_h=sum(s["hours"] for s in c_segs if s["category"] == CAT_WEATHER)))
 
     points.append((t, cum))
     return PlanResult(segments=segments, gates=gates, delay_points=points, cycles=len(stats),
@@ -375,4 +406,5 @@ def _plan(start, phases, tide, rule, n_cycles, restrictions, raise_data_end=Fals
                       nominal_cycle_h=float(sum(p.hours for p in phases)),
                       tide=tide, rule=rule, cycle_stats=stats, restrictions=restrictions,
                       total_tidal_wait_h=sum(c["tidal_wait_h"] for c in stats),
-                      total_restriction_wait_h=sum(c["restriction_wait_h"] for c in stats))
+                      total_restriction_wait_h=sum(c["restriction_wait_h"] for c in stats),
+                      total_weather_h=sum(c["weather_h"] for c in stats), weather=weather)

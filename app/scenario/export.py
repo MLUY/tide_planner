@@ -20,7 +20,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from .downtime import MONTHS
-from .planning import CAT_RESTRICT, CAT_WAIT, PlanResult
+from .planning import CAT_RESTRICT, CAT_WAIT, CAT_WEATHER, PlanResult
 
 DT = "yyyy-mm-dd hh:mm"
 HOURS = "0.00"
@@ -30,8 +30,8 @@ TITLE_FONT = Font(bold=True, size=14)
 SECTION_FONT = Font(bold=True, size=11, color="1F4E78")
 # light versions of the chart colours
 FILLS = {"Port": "E8D9D5", "Sailing": "D2E3F1", "Installation": "D5EDD5",
-         CAT_WAIT: "F7D0D0", CAT_RESTRICT: "F9DDEF"}
-DELAY_TYPE = {CAT_WAIT: "Tidal", CAT_RESTRICT: "Time restriction"}
+         CAT_WAIT: "F7D0D0", CAT_RESTRICT: "F9DDEF", CAT_WEATHER: "DDDDDD"}
+DELAY_TYPE = {CAT_WAIT: "Tidal", CAT_RESTRICT: "Time restriction", CAT_WEATHER: "Weather"}
 
 
 def _h(x) -> float:
@@ -92,7 +92,8 @@ def _summary(ws, res: PlanResult, inputs: dict, dur=None) -> None:
             ws.cell(row=row, column=3, value=unit)
         row += 1
 
-    section("Results")
+    section("Results - " + (f"gross planning (incl. weather downtime, {res.weather.name})" if res.weather
+                             else "nett planning (excl. weather downtime)"))
     avg = sum(c["hours"] for c in res.cycle_stats) / len(res.cycle_stats)
     line("Start", res.start, DT)
     line("Finish", res.finish, DT)
@@ -103,6 +104,7 @@ def _summary(ws, res: PlanResult, inputs: dict, dur=None) -> None:
     line("Total delay", _h(res.total_wait_h), "0.0", "h")
     line("  of which tidal", _h(res.total_tidal_wait_h), "0.0", "h")
     line("  of which time restriction", _h(res.total_restriction_wait_h), "0.0", "h")
+    line("  of which weather downtime", _h(res.total_weather_h), "0.0", "h")
     row += 1
 
     if dur is not None:
@@ -115,8 +117,10 @@ def _summary(ws, res: PlanResult, inputs: dict, dur=None) -> None:
         line("Weather downtime norm", f"{dur.norm.name} (MWS {dur.norm.mws_h:g} hr)" if dur.norm
              else "None - gross = nett")
         line("Weather downtime", _h(dur.downtime_h), "0.0", "h")
+        line("Gross duration per cycle", _h(dur.gross_cycle_h), "0.0", "h")
         line("Total gross duration", _h(dur.gross_total_h), "0.0", "h")
         line("Total gross duration", round(dur.gross_total_h / 24, 2), "0.0", "days")
+        line("Finish (nett)", dur.nett_finish, DT)
         line("Finish (gross)", dur.gross_finish, DT)
         if dur.norm:
             ws.cell(row=row, column=1, value="Workability per month (%)")
@@ -186,21 +190,21 @@ def _cycles(ws, res: PlanResult) -> None:
     ent = {g["cycle"]: g for g in res.gates if g["direction"] == "Entry"}
     rows = [[c["cycle"], c["start"], dep[c["cycle"]]["time"], ent[c["cycle"]]["time"], c["finish"],
              _h(c["hours"]), _h(c["hours"] - c["wait_h"]), _h(c["tidal_wait_h"]),
-             _h(c["restriction_wait_h"]), _h(c["wait_h"])]
+             _h(c["restriction_wait_h"]), _h(c["weather_h"]), _h(c["wait_h"])]
             for c in res.cycle_stats]
     _table(ws, ["Cycle", "Start", "Departure", "Entry", "End", "Cycle (h)", "Working (h)",
-                "Tidal delay (h)", "Time restriction delay (h)", "Total delay (h)"],
-           rows, formats={1: DT, 2: DT, 3: DT, 4: DT, 5: HOURS, 6: HOURS, 7: HOURS, 8: HOURS, 9: HOURS},
-           widths=[7, 17, 17, 17, 17, 10, 11, 11, 14, 11])
+                "Tidal delay (h)", "Time restriction delay (h)", "Weather downtime (h)", "Total delay (h)"],
+           rows, formats={1: DT, 2: DT, 3: DT, 4: DT, 5: HOURS, 6: HOURS, 7: HOURS, 8: HOURS, 9: HOURS, 10: HOURS},
+           widths=[7, 17, 17, 17, 17, 10, 11, 11, 14, 12, 11])
     n = len(rows) + 1
     tot = n + 1
     ws.cell(row=tot, column=1, value="Total").font = Font(bold=True)
-    for col in range(6, 11):
+    for col in range(6, 12):
         L = get_column_letter(col)
         c = ws.cell(row=tot, column=col, value=f"=SUM({L}2:{L}{n})")
         c.number_format, c.font = HOURS, Font(bold=True)
     ws.cell(row=tot + 1, column=1, value="Average").font = Font(bold=True)
-    for col in range(6, 11):
+    for col in range(6, 12):
         L = get_column_letter(col)
         c = ws.cell(row=tot + 1, column=col, value=f"=AVERAGE({L}2:{L}{n})")
         c.number_format, c.font = HOURS, Font(bold=True)
@@ -253,14 +257,13 @@ def _tide(ws, res: PlanResult) -> None:
 
 
 def _downtime(ws, dur) -> None:
-    rows = [[m["month"], m["start"], m["start"] + timedelta(hours=m["gross_h"]), m["pct"], _h(m["gross_h"]),
-             _h(m["nett_h"]), _h(m["downtime_h"])] for m in dur.months]
-    _table(ws, ["Month", "From", "To", "Workability (%)", "Gross (h)", "Nett work (h)", "Weather downtime (h)"],
-           rows, formats={0: "mmm yyyy", 1: DT, 2: DT, 3: "0.0", 4: HOURS, 5: HOURS, 6: HOURS},
-           widths=[11, 17, 17, 13, 10, 12, 14])
+    """Weather downtime of the gross planning per calendar month (month of arrival at site)."""
+    rows = [[m["month"], m["pct"], m["cycles"], _h(m["downtime_h"])] for m in dur.months]
+    _table(ws, ["Month", "Workability (%)", "Cycles arriving at site", "Weather downtime (h)"],
+           rows, formats={0: "mmm yyyy", 1: "0.0", 3: HOURS}, widths=[11, 13, 14, 14])
     n = len(rows) + 1
     ws.cell(row=n + 1, column=1, value="Total").font = Font(bold=True)
-    for col in (5, 6, 7):
+    for col in (3, 4):
         L = get_column_letter(col)
         c = ws.cell(row=n + 1, column=col, value=f"=SUM({L}2:{L}{n})")
         c.number_format, c.font = HOURS, Font(bold=True)

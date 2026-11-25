@@ -5,21 +5,36 @@ from pathlib import Path
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+from munch import Munch
 from plotly.subplots import make_subplots
 import viktor as vkt
 
-from .downtime import (MONTH_KEYS, MONTHS, DowntimeError, Norm, default_table_rows,
-                       project_duration)
+from .downtime import (MONTH_KEYS, MONTHS, DowntimeError, Norm, default_table_rows, project_duration,
+                       validate_norm)
 from .export import build_excel
 from .planning import (DEFAULT_CYCLE, PHASE_TYPES, GateRule, Phase, PlanningError, TimeRestriction,
                        load_tide, plan_installation)
 
 COLORS = {"Port": "#8c564b", "Sailing": "#1f77b4", "Installation": "#2ca02c", "Tidal wait": "#d62728",
-          "Time restriction wait": "#e377c2"}
-WAIT_CATEGORIES = ("Tidal wait", "Time restriction wait")
+          "Time restriction wait": "#e377c2", "Weather downtime": "#7f7f7f"}
+WAIT_CATEGORIES = ("Tidal wait", "Time restriction wait", "Weather downtime")
 RESTRICT_NO, RESTRICT_YES = "No", "Yes"
+BASIS_GROSS, BASIS_NETT = "Gross (incl. weather downtime)", "Nett (excl. weather downtime)"
 DEFAULT_DOWNTIME_NORM = "BL2 MP Installation Best"
 DEFAULT_TIDE = Path(__file__).resolve().parents[2] / "sample_data" / "gunsan_tide_2026_hourly.csv"
+TABS = ("input", "added_features")
+
+
+def _flat(params):
+    """The inputs are split over tabs (params.input.x, params.added_features.y); the calculations
+    use one flat set of inputs (params.x). Field names are unique over the tabs."""
+    out = Munch()
+    for key, value in (params or {}).items():
+        if key in TABS and isinstance(value, dict):
+            out.update(value)
+        else:
+            out[key] = value
+    return out
 
 
 def _required_tide(params):
@@ -29,11 +44,11 @@ def _required_tide(params):
 
 
 def _tide_summary(params, **kwargs) -> str:
-    rising, falling = _required_tide(params)
+    rising, falling = _required_tide(_flat(params))
     return f"Required tide: **{rising:.0f} cm** on a rising tide, **{falling:.0f} cm** on a falling tide."
 
 
-def _run_plan(params):
+def _run_plan(params, weather=None):
     if not params.start_date:
         raise vkt.UserError("Please fill in the start date.")
 
@@ -51,24 +66,34 @@ def _run_plan(params):
         data = params.tide_file.file.getvalue_binary() if params.tide_file else DEFAULT_TIDE.read_bytes()
         tide = load_tide(data)
         return plan_installation(start=start, phases=phases, tide=tide, rule=rule,
-                                 n_cycles=int(params.n_cycles or 0), restrictions=restrictions)
+                                 n_cycles=int(params.n_cycles or 0), restrictions=restrictions, weather=weather)
     except PlanningError as exc:
         raise vkt.UserError(str(exc))
 
 
-_RESTRICT_ON = vkt.IsEqual(vkt.Lookup("use_time_restrictions"), RESTRICT_YES)
-_DOWNTIME_ON = vkt.IsEqual(vkt.Lookup("use_downtime"), RESTRICT_YES)
+_RESTRICT_ON = vkt.IsEqual(vkt.Lookup("added_features.use_time_restrictions"), RESTRICT_YES)
+_DOWNTIME_ON = vkt.IsEqual(vkt.Lookup("added_features.use_downtime"), RESTRICT_YES)
 _PLAN_CACHE: dict = {}
 
 
-def _plan_cached(params):
-    """The output fields all need the planning; compute it once per set of inputs."""
+def _plans(params):
+    """(nett planning, gross planning, norm) for flat params; gross = nett without weather downtime.
+    Cached, because the output fields and views all need the same plannings."""
     key = json.dumps(params, default=str, sort_keys=True)
     if key not in _PLAN_CACHE:
         if len(_PLAN_CACHE) > 20:
             _PLAN_CACHE.clear()
-        _PLAN_CACHE[key] = _run_plan(params)
+        norm = _selected_norm(params)
+        nett = _run_plan(params)
+        gross = _run_plan(params, weather=norm) if norm else nett
+        _PLAN_CACHE[key] = (nett, gross, norm)
     return _PLAN_CACHE[key]
+
+
+def _view_plan(params):
+    """The planning shown in the views and the Excel export: gross (default) or nett."""
+    nett, gross, _ = _plans(params)
+    return nett if params.planning_basis == BASIS_NETT else gross
 
 
 def _norm_rows(params):
@@ -76,7 +101,7 @@ def _norm_rows(params):
 
 
 def _norm_options(params, **kwargs):
-    return [r.norm.strip() for r in _norm_rows(params)] or [default_table_rows()[0]["norm"]]
+    return [r.norm.strip() for r in _norm_rows(_flat(params))] or [default_table_rows()[0]["norm"]]
 
 
 def _selected_norm(params):
@@ -89,26 +114,26 @@ def _selected_norm(params):
     row = next((r for r in rows if r.norm.strip() == chosen), None)
     if row is None:
         raise vkt.UserError("Select the norm that is the basis for the weather downtime.")
-    return Norm(name=row.norm.strip(), mws_h=float(row.mws_h or 0),
+    norm = Norm(name=row.norm.strip(), mws_h=float(row.mws_h or 0),
                 monthly_pct=[None if row[k] is None else float(row[k]) for k in MONTH_KEYS],
                 year_pct=None if row.year is None else float(row.year))
-
-
-def _duration(params, res=None):
-    res = res or _plan_cached(params)
-    nett_cycle = sum(c["hours"] for c in res.cycle_stats) / len(res.cycle_stats)
     try:
-        return project_duration(start=res.start, n_cycles=res.cycles, nett_cycle_h=nett_cycle,
-                                nominal_cycle_h=res.nominal_cycle_h, norm=_selected_norm(params))
+        validate_norm(norm)
     except DowntimeError as exc:
         raise vkt.UserError(str(exc))
+    return norm
+
+
+def _duration(params):
+    nett, gross, norm = _plans(params)
+    return project_duration(nett, gross, norm)
 
 
 def _out(fn):
     """Output field callback that shows '-' instead of an error while inputs are incomplete."""
     def callback(params, **kwargs):
         try:
-            return fn(_duration(params))
+            return fn(_duration(_flat(params)))
         except Exception:  # noqa: BLE001
             return "-"
     return callback
@@ -119,108 +144,128 @@ def _fmt_h(h):
 
 
 class Parametrization(vkt.Parametrization):
-    title = vkt.Text("##  Tidal planner")
-    download_excel = vkt.DownloadButton("Download planning (Excel)", method="download_excel",
-                                        description="All activities (from - to, type of delay), cycles, "
-                                                    "departures/entries and tidal data in one Excel file.")
+    # ---------------- tab 1: planning, cycle, vessel, channel, tide ----------------
+    input = vkt.Tab("Input")
+    input.title = vkt.Text("##  Tidal planner")
+    input.download_excel = vkt.DownloadButton("Download planning (Excel)", method="download_excel",
+                                              description="All activities (from - to, type of delay), cycles, "
+                                                          "departures/entries and tidal data in one Excel file.")
 
-    planning_text = vkt.Text("### Planning")
-    start_date = vkt.DateField("Start date")
-    start_hour = vkt.NumberField("Start time (hour of day)", default=0, min=0, max=23.99, suffix="h")
-    n_cycles = vkt.IntegerField("Number of cycles", default=10, min=1)
+    input.planning_text = vkt.Text("### Planning")
+    input.start_date = vkt.DateField("Start date")
+    input.start_hour = vkt.NumberField("Start time (hour of day)", default=0, min=0, max=23.99, suffix="h")
+    input.n_cycles = vkt.IntegerField("Number of cycles", default=10, min=1)
+    input.planning_basis = vkt.OptionField("Planning basis", options=[BASIS_GROSS, BASIS_NETT], default=BASIS_GROSS,
+                                           flex=60, description="Gross includes the weather downtime from the tab "
+                                                                "'Added features'; without weather downtime gross "
+                                                                "equals nett.")
 
-    lb1 = vkt.LineBreak()
-    cycle_text = vkt.Text("### Cycle\nThe port is left at the start of *Sail to site* "
-                          "and entered at the end of *Sail to port*.")
-    cycle = vkt.Table("Cycle phases", default=DEFAULT_CYCLE)
-    cycle.phase = vkt.TextField("Phase")
-    cycle.type = vkt.OptionField("Type", options=PHASE_TYPES)
-    cycle.hours = vkt.NumberField("Duration", suffix="hr", min=0)
+    input.lb1 = vkt.LineBreak()
+    input.cycle_text = vkt.Text("### (Nett) cycle\nThe port is left at the start of *Sail to site* "
+                                "and entered at the end of *Sail to port*.")
+    input.cycle = vkt.Table("Cycle phases", default=DEFAULT_CYCLE)
+    input.cycle.phase = vkt.TextField("Phase")
+    input.cycle.type = vkt.OptionField("Type", options=PHASE_TYPES)
+    input.cycle.hours = vkt.NumberField("Duration", suffix="hr", min=0)
 
-    lb2 = vkt.LineBreak()
-    vessel_text = vkt.Text("### Vessel")
-    vessel_name = vkt.TextField("Vessel Name", default="Bokalift 2",
-                                    flex=100)
-    draft = vkt.NumberField("Vessel draft", suffix="m", default=11.0)
-    keel_clearance = vkt.NumberField("Keel clearance", suffix="m", default=0.0, min=0)
+    input.lb2 = vkt.LineBreak()
+    input.vessel_text = vkt.Text("### Vessel")
+    input.vessel_name = vkt.TextField("Vessel Name", default="Bokalift 2", flex=100)
+    input.draft = vkt.NumberField("Vessel draft", suffix="m", default=11.0)
+    input.keel_clearance = vkt.NumberField("Keel clearance", suffix="m", default=0.0, min=0)
 
-    lb3 = vkt.LineBreak()
-    channel_text = vkt.Text("### Tidal entrance channel")
-    channel_from_to = vkt.TextField("Tidal entrance channel (from - to)", default="Berth 64 up to buoy 5",
-                                    flex=100)
-    channel_length = vkt.NumberField("Channel length (approx.)", suffix="km", default=2.0, min=0)
-    channel_depth = vkt.NumberField("Dredged depth CD", suffix="m", default=7.4)
-    transit_h = vkt.NumberField("Transit time ", suffix="hr", default=0, min=0)
+    input.lb3 = vkt.LineBreak()
+    input.channel_text = vkt.Text("### Tidal entrance channel")
+    input.channel_from_to = vkt.TextField("Tidal entrance channel (from - to)", default="Berth 64 up to buoy 5",
+                                          flex=100)
+    input.channel_length = vkt.NumberField("Channel length (approx.)", suffix="km", default=2.0, min=0)
+    input.channel_depth = vkt.NumberField("Dredged depth CD", suffix="m", default=7.4)
+    input.transit_h = vkt.NumberField("Transit time ", suffix="hr", default=0, min=0)
 
-    lb4 = vkt.LineBreak()
-    tide_text = vkt.Text("### Tide")
-    margin_rising = vkt.NumberField("Extra margin - rising tide", suffix="cm", default=0, min=0)
-    margin_falling = vkt.NumberField("Extra margin - falling tide", suffix="cm", default=40, min=0)
-    required = vkt.OutputField("Required tide", value=_tide_summary, flex=100)
-    tide_file = vkt.FileField("Tidal data (optional, default Gunsan 2026)", file_types=[".csv"])
-    tide_repeat_note = vkt.Text("*Note: the tidal data of one year is repeated for every other year "
-                                "(same calendar date and time), so the tidal data never runs out. This needs a "
-                                "file of at least one full year; a shorter file is only used for its own period. "
-                                "Repeated years are an approximation of the real tide.*")
+    input.lb4 = vkt.LineBreak()
+    input.tide_text = vkt.Text("### Tide")
+    input.margin_rising = vkt.NumberField("Extra margin - rising tide", suffix="cm", default=0, min=0)
+    input.margin_falling = vkt.NumberField("Extra margin - falling tide", suffix="cm", default=40, min=0)
+    input.required = vkt.OutputField("Required tide", value=_tide_summary, flex=100)
+    input.tide_file = vkt.FileField("Tidal data (optional, default Gunsan 2026)", file_types=[".csv"])
+    input.tide_repeat_note = vkt.Text("*Note: the tidal data of one year is repeated for every other year "
+                                      "(same calendar date and time), so the tidal data never runs out. This needs "
+                                      "a file of at least one full year; a shorter file is only used for its own "
+                                      "period. Repeated years are an approximation of the real tide.*")
 
-    lb5 = vkt.LineBreak()
-    restriction_title = vkt.Text("### Time restrictions - sailing in/out of port")
-    use_time_restrictions = vkt.OptionField("Apply time restrictions?", options=[RESTRICT_NO, RESTRICT_YES],
-                                            default=RESTRICT_NO)
-    restriction_text = vkt.Text("Daily periods in which the vessel may **not sail in or out** of the port "
-                                "(e.g. no night transits). The vessel waits (alongside for departure, outside "
-                                "the port for entry) until the period has ended, on top of the tidal window. "
-                                "A period may run past midnight (e.g. from 22 to 6). "
-                                "Times in hours of the day, same time zone as the tidal data.\n\n"
-                                "Add one row per time slot (e.g. night closure, pilot shift change); "
-                                "any number of slots can be combined and they may overlap.",
-                                visible=_RESTRICT_ON)
-    time_restrictions = vkt.Table("Time restrictions", visible=_RESTRICT_ON)
-    time_restrictions.description = vkt.TextField("Description")
-    time_restrictions.from_h = vkt.NumberField("Not allowed from", suffix="h", min=0, max=24)
-    time_restrictions.to_h = vkt.NumberField("Not allowed until", suffix="h", min=0, max=24)
+    # ---------------- tab 2: time restrictions, weather downtime, project duration ----------------
+    added_features = vkt.Tab("Added features")
+    added_features.restriction_title = vkt.Text("### Time restrictions - sailing in/out of port")
+    added_features.use_time_restrictions = vkt.OptionField("Apply time restrictions?",
+                                                           options=[RESTRICT_NO, RESTRICT_YES], default=RESTRICT_NO)
+    added_features.restriction_text = vkt.Text(
+        "Daily periods in which the vessel may **not sail in or out** of the port "
+        "(e.g. no night transits). The vessel waits (alongside for departure, outside "
+        "the port for entry) until the period has ended, on top of the tidal window. "
+        "A period may run past midnight (e.g. from 22 to 6). "
+        "Times in hours of the day, same time zone as the tidal data.\n\n"
+        "Add one row per time slot (e.g. night closure, pilot shift change); "
+        "any number of slots can be combined and they may overlap.",
+        visible=_RESTRICT_ON)
+    added_features.time_restrictions = vkt.Table("Time restrictions", visible=_RESTRICT_ON)
+    added_features.time_restrictions.description = vkt.TextField("Description")
+    added_features.time_restrictions.from_h = vkt.NumberField("Not allowed from", suffix="h", min=0, max=24)
+    added_features.time_restrictions.to_h = vkt.NumberField("Not allowed until", suffix="h", min=0, max=24)
 
-    lb6 = vkt.LineBreak()
-    downtime_title = vkt.Text("### Weather downtime - monthly workability (SME)")
-    use_downtime = vkt.OptionField("Apply monthly downtime percentages?", options=[RESTRICT_NO, RESTRICT_YES],
-                                   default=RESTRICT_NO)
-    downtime_text = vkt.Text("Workability per month from the Site Metocean Report (SME): the percentage of time "
-                             "in which the operation can be performed within the MWS weather window. "
-                             "One row per norm; add or edit rows as needed. "
-                             "The selected norm is applied to the whole operational cycle.",
-                             visible=_DOWNTIME_ON)
-    downtime_norms = vkt.Table("Workability norms (%)", default=default_table_rows(), visible=_DOWNTIME_ON)
-    downtime_norms.norm = vkt.TextField("Norm")
-    downtime_norms.mws_h = vkt.NumberField("MWS window", suffix="hr", min=0)
+    added_features.lb6 = vkt.LineBreak()
+    added_features.downtime_title = vkt.Text("### Weather downtime - monthly workability (SME)")
+    added_features.use_downtime = vkt.OptionField("Apply monthly downtime percentages?",
+                                                  options=[RESTRICT_NO, RESTRICT_YES], default=RESTRICT_NO)
+    added_features.downtime_text = vkt.Text(
+        "Workability per month from the Site Metocean Report (SME): the percentage of time "
+        "in which the operation can be performed within the MWS weather window. "
+        "One row per norm; add or edit rows as needed.\n\n"
+        "In the gross planning, the vessel waits on weather at site in every cycle for "
+        "(working hours of the cycle) x (100 / workability of that month - 1).",
+        visible=_DOWNTIME_ON)
+    added_features.downtime_norms = vkt.Table("Workability norms (%)", default=default_table_rows(),
+                                              visible=_DOWNTIME_ON)
+    added_features.downtime_norms.norm = vkt.TextField("Norm")
+    added_features.downtime_norms.mws_h = vkt.NumberField("MWS window", suffix="hr", min=0)
     for _key, _label in zip(MONTH_KEYS, MONTHS):
-        setattr(downtime_norms, _key, vkt.NumberField(_label, suffix="%", min=0, max=100))
+        setattr(added_features.downtime_norms, _key, vkt.NumberField(_label, suffix="%", min=0, max=100))
     del _key, _label
-    downtime_norms.year = vkt.NumberField("Year", suffix="%", min=0, max=100)
-    downtime_norm = vkt.OptionField("Norm used as basis for the downtime", options=_norm_options,
-                                    default=DEFAULT_DOWNTIME_NORM, visible=_DOWNTIME_ON, flex=60)
+    added_features.downtime_norms.year = vkt.NumberField("Year", suffix="%", min=0, max=100)
+    added_features.downtime_norm = vkt.OptionField("Norm used as basis for the downtime", options=_norm_options,
+                                                   default=DEFAULT_DOWNTIME_NORM, visible=_DOWNTIME_ON, flex=60)
 
-    lb7 = vkt.LineBreak()
-    duration_title = vkt.Text("### Total project duration")
-    out_nominal = vkt.OutputField("Nominal cycle (no delays)", value=_out(lambda d: _fmt_h(d.nominal_cycle_h)),
-                                  flex=50)
-    out_nett_cycle = vkt.OutputField("Nett duration per cycle (incl. tidal / time restriction waits)",
-                                     value=_out(lambda d: _fmt_h(d.nett_cycle_h)), flex=50)
-    out_nett_total = vkt.OutputField("Total nett duration (cycles x nett per cycle)",
-                                     value=_out(lambda d: f"{d.n_cycles} x {d.nett_cycle_h:.1f} h = "
-                                                          f"{_fmt_h(d.nett_total_h)}"), flex=100)
-    out_gross_total = vkt.OutputField("Total gross duration (incl. weather downtime)",
-                                      value=_out(lambda d: _fmt_h(d.gross_total_h)
-                                                 + (f" - norm {d.norm.name}, downtime {d.downtime_h:,.1f} h"
-                                                    if d.norm else " - no downtime applied")), flex=100)
-    out_finish = vkt.OutputField("Finish (gross)", value=_out(lambda d: f"{d.gross_finish:%Y-%m-%d %H:%M}"),
-                                 flex=50)
+    added_features.lb7 = vkt.LineBreak()
+    added_features.duration_title = vkt.Text("### Total project duration")
+    added_features.out_nominal = vkt.OutputField("Nominal cycle (no delays)",
+                                                 value=_out(lambda d: _fmt_h(d.nominal_cycle_h)), flex=50)
+    added_features.out_nett_cycle = vkt.OutputField("Nett duration per cycle (incl. tidal / time restriction waits)",
+                                                    value=_out(lambda d: _fmt_h(d.nett_cycle_h)), flex=50)
+    added_features.out_nett_total = vkt.OutputField("Total nett duration (cycles x nett per cycle)",
+                                                    value=_out(lambda d: f"{d.n_cycles} x {d.nett_cycle_h:.1f} h = "
+                                                                         f"{_fmt_h(d.nett_total_h)}"), flex=100)
+    added_features.out_gross_total = vkt.OutputField(
+        "Total gross duration (incl. weather downtime)",
+        value=_out(lambda d: _fmt_h(d.gross_total_h)
+                   + (f" - norm {d.norm.name}, weather downtime {d.downtime_h:,.1f} h"
+                      if d.norm else " - no weather downtime applied (gross = nett)")), flex=100)
+    added_features.out_finish = vkt.OutputField(
+        "Finish nett / gross", value=_out(lambda d: f"{d.nett_finish:%Y-%m-%d %H:%M} / {d.gross_finish:%Y-%m-%d %H:%M}"),
+        flex=60)
+
+
+def _basis_text(res) -> str:
+    return f"Gross planning ({res.weather.name})" if res.weather else "Nett planning"
 
 
 def _delay_text(res) -> str:
     txt = f"total delay {res.total_wait_h:.1f} h"
+    parts = [f"tidal {res.total_tidal_wait_h:.1f} h"]
     if res.restrictions:
-        txt += (f" (tidal {res.total_tidal_wait_h:.1f} h, "
-                f"time restriction {res.total_restriction_wait_h:.1f} h)")
+        parts.append(f"time restriction {res.total_restriction_wait_h:.1f} h")
+    if res.weather:
+        parts.append(f"weather {res.total_weather_h:.1f} h")
+    if len(parts) > 1:
+        txt += f" ({', '.join(parts)})"
     return txt
 
 
@@ -236,7 +281,7 @@ def build_gantt(res, vessel: str = "") -> go.Figure:
     fig.update_yaxes(categoryorder="array", categoryarray=order[::-1], title_text="")
     fig.update_xaxes(rangeslider_visible=True)
     fig.update_layout(
-        title=(f"{vessel + ' | ' if vessel else ''}{res.cycles} cycles | nominal cycle {res.nominal_cycle_h:.0f} h | "
+        title=(f"{_basis_text(res)} | {vessel + ' | ' if vessel else ''}{res.cycles} cycles | nominal cycle {res.nominal_cycle_h:.0f} h | "
                f"finish {res.finish:%Y-%m-%d %H:%M}<br>{_delay_text(res).capitalize()}"),
         height=520, margin=dict(l=220, t=110), legend_title_text="")
     return fig
@@ -246,9 +291,8 @@ def build_delay_curve(res) -> go.Figure:
     fig = go.Figure(go.Scatter(x=[p[0] for p in res.delay_points], y=[p[1] for p in res.delay_points],
                                mode="lines", line=dict(color=COLORS["Tidal wait"], width=2),
                                name="Cumulative delay"))
-    fig.update_layout(title=f"Cumulative delay: {res.total_wait_h:.1f} h ({res.total_wait_h / 24:.1f} days)"
-                            + (f" - tidal {res.total_tidal_wait_h:.1f} h, time restriction "
-                               f"{res.total_restriction_wait_h:.1f} h" if res.restrictions else ""),
+    fig.update_layout(title=f"{_basis_text(res)} - cumulative delay {res.total_wait_h / 24:.1f} days<br>"
+                            f"{_delay_text(res).capitalize()}",
                       xaxis_title="Date", yaxis_title="Total delay (hr)", height=450)
     return fig
 
@@ -324,7 +368,7 @@ def build_tide_cycles(res) -> go.Figure:
     repeat = (f"<br><sup>Tidal data {tide.data_start:%Y-%m-%d} - {tide.data_end:%Y-%m-%d} repeated for other "
               f"years</sup>" if tide.repeated and not (tide.is_measured(res.start) and tide.is_measured(res.finish))
               else "")
-    fig.update_layout(title=f"Tide and planning - {res.cycles} cycles | {_delay_text(res)}{repeat}",
+    fig.update_layout(title=f"{_basis_text(res)} - {res.cycles} cycles | {_delay_text(res)}{repeat}",
                       barmode="overlay", height=650, hovermode="closest", legend_title_text="")
     return fig
 
@@ -345,12 +389,19 @@ def build_cycle_table(res) -> go.Figure:
         [f"{c['hours']:.1f}" for c in cs],
         [f"{c['tidal_wait_h']:.1f}" for c in cs]]
     if res.restrictions:
-        header += ["Time restr. delay (h)", "Total delay (h)"]
-        values += [[f"{c['restriction_wait_h']:.1f}" for c in cs], [f"{c['wait_h']:.1f}" for c in cs]]
+        header += ["Time restr. delay (h)"]
+        values += [[f"{c['restriction_wait_h']:.1f}" for c in cs]]
+    if res.weather:
+        header += ["Weather downtime (h)"]
+        values += [[f"{c['weather_h']:.1f}" for c in cs]]
+    if res.restrictions or res.weather:
+        header += ["Total delay (h)"]
+        values += [[f"{c['wait_h']:.1f}" for c in cs]]
     fig = go.Figure(go.Table(header=dict(values=header, align="left"),
                              cells=dict(values=values, align="left")))
     avg = sum(c["hours"] for c in cs) / len(cs)
-    fig.update_layout(title=f"Average cycle {avg:.1f} h vs nominal {res.nominal_cycle_h:.0f} h", height=600)
+    fig.update_layout(title=f"{_basis_text(res)} - average cycle {avg:.1f} h vs nominal "
+                            f"{res.nominal_cycle_h:.0f} h", height=600)
     return fig
 
 
@@ -361,32 +412,31 @@ def build_duration(d) -> go.Figure:
             ("Total nett duration", f"{d.n_cycles} x {d.nett_cycle_h:.1f} h = {_fmt_h(d.nett_total_h)}"),
             ("Weather downtime norm", f"{d.norm.name} (MWS {d.norm.mws_h:g} hr)" if d.norm else "None (not applied)"),
             ("Weather downtime", _fmt_h(d.downtime_h)),
+            ("Gross duration per cycle", _fmt_h(d.gross_cycle_h)),
             ("Total gross duration", _fmt_h(d.gross_total_h)),
-            ("Effective workability", f"{d.effective_pct:.1f} %"),
+            ("Effective workability (work / (work + weather))", f"{d.effective_pct:.1f} %"),
             ("Start", f"{d.start:%Y-%m-%d %H:%M}"),
             ("Finish nett / gross", f"{d.nett_finish:%Y-%m-%d %H:%M}  /  {d.gross_finish:%Y-%m-%d %H:%M}")]
+    table = go.Table(columnwidth=[3, 4], header=dict(values=["Project duration", ""], align="left"),
+                     cells=dict(values=[[r[0] for r in rows], [r[1] for r in rows]], align="left"))
     if not d.norm:
-        fig = go.Figure(go.Table(columnwidth=[3, 4], header=dict(values=["Project duration", ""], align="left"),
-                                 cells=dict(values=[[r[0] for r in rows], [r[1] for r in rows]], align="left")))
-        fig.update_layout(title="Total project duration - no weather downtime applied (gross = nett)", height=450)
+        fig = go.Figure(table)
+        fig.update_layout(title="Total project duration - no weather downtime applied (gross = nett)", height=480)
         return fig
     fig = make_subplots(rows=2, cols=1, row_heights=[0.5, 0.5], vertical_spacing=0.08,
                         specs=[[{"type": "table"}], [{"type": "xy"}]])
-    fig.add_trace(go.Table(columnwidth=[3, 4], header=dict(values=["Project duration", ""], align="left"),
-                           cells=dict(values=[[r[0] for r in rows], [r[1] for r in rows]], align="left")),
-                  row=1, col=1)
+    fig.add_trace(table, row=1, col=1)
     labels = [f"{m['month']:%b %Y}" for m in d.months]
-    fig.add_trace(go.Bar(x=labels, y=[m["nett_h"] for m in d.months], name="Working (nett)",
-                         marker_color=COLORS["Installation"],
-                         text=[f"{m['pct']:.1f} %" for m in d.months], textposition="inside",
-                         hovertemplate="%{x}: %{y:.1f} h nett<extra></extra>"), row=2, col=1)
     fig.add_trace(go.Bar(x=labels, y=[m["downtime_h"] for m in d.months], name="Weather downtime",
-                         marker_color="#7f7f7f", hovertemplate="%{x}: %{y:.1f} h downtime<extra></extra>"),
-                  row=2, col=1)
-    fig.update_yaxes(title_text="Hours", row=2, col=1)
-    fig.update_layout(barmode="stack", height=750, legend_title_text="",
+                         marker_color=COLORS["Weather downtime"],
+                         text=[f"{m['pct']:.1f} % | {m['cycles']} cycle(s)" for m in d.months],
+                         textposition="outside",
+                         hovertemplate="%{x}: %{y:.1f} h weather downtime<extra></extra>"), row=2, col=1)
+    fig.update_yaxes(title_text="Weather downtime (h)", row=2, col=1)
+    fig.update_layout(height=780, legend_title_text="", showlegend=False,
                       title=f"Total project duration - nett {d.nett_total_h / 24:.1f} days, gross "
-                            f"{d.gross_total_h / 24:.1f} days ({d.norm.name})")
+                            f"{d.gross_total_h / 24:.1f} days ({d.norm.name})<br><sup>Weather downtime per month "
+                            f"(by arrival at site); label = workability of that month and number of cycles</sup>")
     return fig
 
 
@@ -396,6 +446,7 @@ def _export_inputs(params) -> dict:
                  ("Start date", datetime.combine(params.start_date, datetime.min.time())
                   + timedelta(hours=float(params.start_hour or 0)), ""),
                  ("Number of cycles", int(params.n_cycles or 0), ""),
+                 ("Planning basis", params.planning_basis or BASIS_GROSS, ""),
                  ("Vessel draft", float(params.draft or 0), "m"),
                  ("Keel clearance", float(params.keel_clearance or 0), "m"),
                  ("Tidal entrance channel (from - to)", params.channel_from_to or "", ""),
@@ -414,26 +465,30 @@ class Scenario(vkt.Controller):
     parametrization = Parametrization
 
     def download_excel(self, params, **kwargs):
-        res = _run_plan(params)
-        name = f"tide_planning_{res.start:%Y%m%d}_{res.cycles}cycles.xlsx"
-        return vkt.DownloadResult(build_excel(res, _export_inputs(params), _duration(params, res)), name)
-
-    @vkt.PlotlyView("Project duration", duration_guess=2)
-    def duration_view(self, params, **kwargs):
-        return vkt.PlotlyResult(json.loads(build_duration(_duration(params, _run_plan(params))).to_json()))
+        params = _flat(params)
+        res = _view_plan(params)
+        kind = "gross" if res.weather else "nett"
+        name = f"tide_planning_{res.start:%Y%m%d}_{res.cycles}cycles_{kind}.xlsx"
+        return vkt.DownloadResult(build_excel(res, _export_inputs(params), _duration(params)), name)
 
     @vkt.PlotlyView("Planning (Gantt)", duration_guess=2)
     def gantt_view(self, params, **kwargs):
-        return vkt.PlotlyResult(json.loads(build_gantt(_run_plan(params), (params.vessel_name or "").strip()).to_json()))
+        params = _flat(params)
+        return vkt.PlotlyResult(json.loads(build_gantt(_view_plan(params),
+                                                       (params.vessel_name or "").strip()).to_json()))
 
     @vkt.PlotlyView("Tide and cycles", duration_guess=3)
     def tide_cycles_view(self, params, **kwargs):
-        return vkt.PlotlyResult(json.loads(build_tide_cycles(_run_plan(params)).to_json()))
+        return vkt.PlotlyResult(json.loads(build_tide_cycles(_view_plan(_flat(params))).to_json()))
 
     @vkt.PlotlyView("Cycle table", duration_guess=2)
     def cycle_table_view(self, params, **kwargs):
-        return vkt.PlotlyResult(json.loads(build_cycle_table(_run_plan(params)).to_json()))
+        return vkt.PlotlyResult(json.loads(build_cycle_table(_view_plan(_flat(params))).to_json()))
 
     @vkt.PlotlyView("Tidal delay", duration_guess=2)
     def delay_view(self, params, **kwargs):
-        return vkt.PlotlyResult(json.loads(build_delay_curve(_run_plan(params)).to_json()))
+        return vkt.PlotlyResult(json.loads(build_delay_curve(_view_plan(_flat(params))).to_json()))
+
+    @vkt.PlotlyView("Project duration", duration_guess=2)
+    def duration_view(self, params, **kwargs):
+        return vkt.PlotlyResult(json.loads(build_duration(_duration(_flat(params))).to_json()))

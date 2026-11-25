@@ -51,15 +51,26 @@ from / until, hours of the day). With **No** (default) the table is hidden and i
   *Time restriction wait* (pink in the charts; restricted periods shown as grey bands in *Tide and cycles*).
 - Times are in the same time zone as the tidal data.
 
+## Input tabs
+- **Input**: planning (incl. *Planning basis*), (nett) cycle, vessel, tidal entrance channel, tide.
+- **Added features**: time restrictions, weather downtime, total project duration.
+
 ## Weather downtime (monthly workability, SME)
 Optional (*Apply monthly downtime percentages?* = Yes). Table with one row per norm: name, MWS window (hr),
 workability % for Jan..Dec and the yearly value from the Site Metocean Report. Pre-filled with
 BL2 General (6 hr), BL2 MP Installation Best (10 hr) and BL2 MP Installation Worst (10 hr).
 Select the norm that is the basis for the downtime of the operational cycle.
 
+## Nett / gross planning
+*Planning basis* (tab Input), default **Gross**:
+- **Nett**: cycles with tidal and time restriction waits, no weather downtime.
+- **Gross**: in every cycle the vessel waits on weather at site (after *Sail to site*) for
+  (working hours of the cycle) x (100 / workability of that month - 1); the tidal windows are then
+  planned on this later timeline. Without weather downtime gross = nett.
+All views and the Excel export follow the selected basis (Weather downtime is shown in grey).
+
 ## Total project duration
-Section in the inputs, view **Project duration** and Excel (Summary + sheet *Weather downtime*):
-- Nett duration per cycle = average planned cycle incl. tidal and time restriction waits (nominal cycle shown for reference).
+Section in tab *Added features*, view **Project duration** and Excel (Summary + sheet *Weather downtime*):
+- Nett duration per cycle = average cycle of the nett planning (incl. tidal and time restriction waits).
 - Total nett duration = number of cycles x nett duration per cycle.
-- Total gross duration: walking month by month from the start, each nett hour in a month with workability w
-  takes 1 / w gross hours. Without monthly downtime, gross = nett.
+- Total gross duration = duration of the gross planning.
