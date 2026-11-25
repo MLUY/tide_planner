@@ -295,7 +295,13 @@ def build_delay_curve(res) -> go.Figure:
     return fig
 
 
-def build_tide_cycles(res) -> go.Figure:
+def _json_safe(value):
+    return value.isoformat() if isinstance(value, datetime) else value
+
+
+def build_tide_cycles(res) -> dict:
+    """Plotly figure as a dict. The many background blocks are added to the dict at the end as plain
+    shapes: letting plotly create/validate them one by one takes seconds to minutes for long plannings."""
     tide, rule = res.tide, res.rule
     h0 = max(tide.to_hours(res.start) - 12, 0.0)
     h1 = min(tide.to_hours(res.finish) + 12, float(tide.hours[-1]))
@@ -306,10 +312,12 @@ def build_tide_cycles(res) -> go.Figure:
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.78, 0.22], vertical_spacing=0.03)
 
-    for s in res.segments:
-        fig.add_vrect(x0=s["start"], x1=s["finish"], fillcolor=COLORS[s["category"]],
-                      opacity=0.3 if s["category"] in WAIT_CATEGORIES else 0.12,
-                      line_width=0, layer="below", row=1, col=1, exclude_empty_subplots=False)
+    # Background blocks are collected as plain shape dicts and set in one go: adding them one by one
+    # with fig.add_vrect gets slower with every shape (minutes for a long planning).
+    shapes = [dict(type="rect", xref="x", yref="y domain", x0=s["start"], x1=s["finish"], y0=0, y1=1,
+                   fillcolor=COLORS[s["category"]], opacity=0.3 if s["category"] in WAIT_CATEGORIES else 0.12,
+                   line=dict(width=0), layer="below")
+              for s in res.segments]
 
     # daily periods in which sailing in/out of the port is not allowed (grey band at the top)
     if res.restrictions:
@@ -320,9 +328,8 @@ def build_tide_cycles(res) -> go.Figure:
                 for a, b in spans:
                     x0, x1 = day + timedelta(hours=a), day + timedelta(hours=b)
                     if x1 > times[0] and x0 < times[-1]:
-                        fig.add_vrect(x0=x0, x1=x1, y0=0.93, y1=1.0, fillcolor="grey", opacity=0.35,
-                                      line_width=0, layer="below", row=1, col=1,
-                                      exclude_empty_subplots=False)
+                        shapes.append(dict(type="rect", xref="x", yref="y domain", x0=x0, x1=x1, y0=0.93, y1=1.0,
+                                           fillcolor="grey", opacity=0.35, line=dict(width=0), layer="below"))
             day += timedelta(days=1)
         fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers", name="No sailing in/out (time restriction)",
                                  marker=dict(symbol="square", size=12, color="grey", opacity=0.5)),
@@ -332,10 +339,13 @@ def build_tide_cycles(res) -> go.Figure:
                              line=dict(color="#1f77b4", width=1.5)), row=1, col=1)
     fig.add_trace(go.Scatter(x=times, y=np.where(is_open, level, np.nan), mode="lines",
                              name="Window open", line=dict(color="#2ca02c", width=3)), row=1, col=1)
-    fig.add_hline(y=rule.rising_cm, line=dict(color="black", dash="dash"), row=1, col=1,
-                  annotation_text=f"Rising min. {rule.rising_cm:.0f} cm", annotation_position="bottom left")
-    fig.add_hline(y=rule.falling_cm, line=dict(color="black", dash="dot"), row=1, col=1,
-                  annotation_text=f"Falling min. {rule.falling_cm:.0f} cm", annotation_position="top left")
+    # required tide lines (as plain shapes too; add_hline would copy all shapes again)
+    for level_cm, dash, text, anchor in ((rule.rising_cm, "dash", f"Rising min. {rule.rising_cm:.0f} cm", "top"),
+                                         (rule.falling_cm, "dot", f"Falling min. {rule.falling_cm:.0f} cm", "bottom")):
+        shapes.append(dict(type="line", xref="x domain", x0=0, x1=1, yref="y", y0=level_cm, y1=level_cm,
+                           line=dict(color="black", dash=dash)))
+        fig.add_annotation(xref="x domain", x=0, yref="y", y=level_cm, text=text, showarrow=False,
+                           xanchor="left", yanchor=anchor)
 
     for direction, symbol, color in (("Departure", "triangle-up", "#ff7f0e"), ("Entry", "triangle-down", "#9467bd")):
         g = [x for x in res.gates if x["direction"] == direction]
@@ -368,7 +378,9 @@ def build_tide_cycles(res) -> go.Figure:
               else "")
     fig.update_layout(title=f"{_basis_text(res)} - {res.cycles} cycles | {_delay_text(res)}{repeat}",
                       barmode="overlay", height=650, hovermode="closest", legend_title_text="")
-    return fig
+    fig_dict = json.loads(fig.to_json())
+    fig_dict["layout"]["shapes"] = [{k: _json_safe(v) for k, v in sh.items()} for sh in shapes]
+    return fig_dict
 
 
 def build_cycle_table(res) -> go.Figure:
@@ -508,9 +520,9 @@ class Scenario(vkt.Controller):
         return vkt.PlotlyResult(json.loads(build_gantt(_view_plan(params),
                                                        (params.vessel_name or "").strip()).to_json()))
 
-    @vkt.PlotlyView("Tide and cycles", duration_guess=3)
+    @vkt.PlotlyView("Tide and cycles", duration_guess=2)
     def tide_cycles_view(self, params, **kwargs):
-        return vkt.PlotlyResult(json.loads(build_tide_cycles(_view_plan(_flat(params))).to_json()))
+        return vkt.PlotlyResult(build_tide_cycles(_view_plan(_flat(params))))
 
     @vkt.PlotlyView("Cycle table", duration_guess=2)
     def cycle_table_view(self, params, **kwargs):
