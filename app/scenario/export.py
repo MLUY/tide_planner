@@ -150,8 +150,11 @@ def _summary(ws, res: PlanResult, inputs: dict, dur=None) -> None:
 
     section("Tidal data")
     line("Source", inputs.get("tide_source", ""))
-    line("Data from", res.tide.t0, DT)
-    line("Data until", res.tide.end, DT)
+    line("Data from", res.tide.data_start, DT)
+    line("Data until", res.tide.data_end, DT)
+    line("Repeated for other years", "Yes" if res.tide.can_repeat() else "No (less than one year of data)")
+    outside = not (res.tide.is_measured(res.start) and res.tide.is_measured(res.finish))
+    line("Planning uses repeated data", "Yes" if (outside and res.tide.can_repeat()) else "No")
 
     ws.column_dimensions["A"].width = 42
     ws.column_dimensions["B"].width = 22
@@ -235,12 +238,14 @@ def _tide(ws, res: PlanResult) -> None:
         act = ""
         if 0 <= idx < len(res.segments) and h < tide.to_hours(res.segments[idx]["finish"]):
             act = f"C{res.segments[idx]['cycle']} {res.segments[idx]['activity']}"
-        rows.append([tide.t0 + timedelta(hours=float(h)), _cm(lv), "Rising" if up else "Falling",
+        ts = tide.t0 + timedelta(hours=float(h))
+        rows.append([ts, _cm(lv), "Rising" if up else "Falling",
                      _cm(rule.rising_cm if up else rule.falling_cm), "Yes" if op else "No",
-                     "Yes" if bl else "No", "Yes" if (op and not bl) else "No", act])
+                     "Yes" if bl else "No", "Yes" if (op and not bl) else "No", act,
+                     "Data file" if tide.is_measured(ts) else f"Repeated from {tide.data_start.year}"])
     _table(ws, ["Date-time", "Tide (cm)", "Tide", "Required (cm)", "Tidal window open",
-                "Time restriction active", "Sailing allowed", "Vessel activity"],
-           rows, formats={0: DT, 1: "0", 3: "0"}, widths=[17, 9, 9, 10, 10, 12, 10, 34])
+                "Time restriction active", "Sailing allowed", "Vessel activity", "Tidal data"],
+           rows, formats={0: DT, 1: "0", 3: "0"}, widths=[17, 9, 9, 10, 10, 12, 10, 34, 18])
     green, red = PatternFill("solid", fgColor="D5EDD5"), PatternFill("solid", fgColor="F7D0D0")
     for r in range(2, len(rows) + 2):
         c = ws.cell(row=r, column=7)

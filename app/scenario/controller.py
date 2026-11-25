@@ -158,6 +158,10 @@ class Parametrization(vkt.Parametrization):
     margin_falling = vkt.NumberField("Extra margin - falling tide", suffix="cm", default=40, min=0)
     required = vkt.OutputField("Required tide", value=_tide_summary, flex=100)
     tide_file = vkt.FileField("Tidal data (optional, default Gunsan 2026)", file_types=[".csv"])
+    tide_repeat_note = vkt.Text("*Note: the tidal data of one year is repeated for every other year "
+                                "(same calendar date and time), so the tidal data never runs out. This needs a "
+                                "file of at least one full year; a shorter file is only used for its own period. "
+                                "Repeated years are an approximation of the real tide.*")
 
     lb5 = vkt.LineBreak()
     restriction_title = vkt.Text("### Time restrictions - sailing in/out of port")
@@ -317,7 +321,10 @@ def build_tide_cycles(res) -> go.Figure:
     fig.update_xaxes(type="date")
     fig.update_yaxes(title_text="Tide level (cm)", row=1, col=1)
     fig.update_yaxes(showticklabels=False, row=2, col=1)
-    fig.update_layout(title=f"Tide and planning - {res.cycles} cycles | {_delay_text(res)}",
+    repeat = (f"<br><sup>Tidal data {tide.data_start:%Y-%m-%d} - {tide.data_end:%Y-%m-%d} repeated for other "
+              f"years</sup>" if tide.repeated and not (tide.is_measured(res.start) and tide.is_measured(res.finish))
+              else "")
+    fig.update_layout(title=f"Tide and planning - {res.cycles} cycles | {_delay_text(res)}{repeat}",
                       barmode="overlay", height=650, hovermode="closest", legend_title_text="")
     return fig
 

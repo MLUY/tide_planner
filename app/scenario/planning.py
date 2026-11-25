@@ -13,6 +13,8 @@ Pure Python (no VIKTOR imports) so it can be tested on its own.
 * Departure: the vessel waits alongside until the gate opens.
   Entry: the vessel waits outside the port until the gate opens.
 * Tide is linearly interpolated between data points; rising/falling is the sign of the slope.
+* Tidal data of one year is repeated for every other year (same calendar date and time), so the
+  planning never runs out of data. Needs at least one full year of data; a shorter file is used as is.
 * Time restrictions (optional): daily periods (e.g. 22:00-06:00) in which the vessel may not
   sail in or out of the port. On top of the tidal window, the vessel waits (alongside for a
   departure, outside the port for an entry) until the restriction has ended.
@@ -115,7 +117,11 @@ class PlanResult:
 
 
 class TideCurve:
-    def __init__(self, df: pd.DataFrame):
+    def __init__(self, df: pd.DataFrame, data_start: datetime | None = None, data_end: datetime | None = None):
+        self.df = df
+        # period covered by the original data file (differs from t0/end once the data is repeated)
+        self.data_start = data_start or df["time"].iloc[0].to_pydatetime()
+        self.data_end = data_end or df["time"].iloc[-1].to_pydatetime()
         self.t0 = df["time"].iloc[0].to_pydatetime()
         self.hours = ((df["time"] - df["time"].iloc[0]) / pd.Timedelta(hours=1)).to_numpy(float)
         self.cm = df["cm"].to_numpy(float)
@@ -124,6 +130,46 @@ class TideCurve:
     @property
     def end(self) -> datetime:
         return self.t0 + timedelta(hours=float(self.hours[-1]))
+
+    @property
+    def repeated(self) -> bool:
+        return self.t0 < self.data_start or self.end > self.data_end
+
+    def is_measured(self, ts: datetime) -> bool:
+        return self.data_start <= ts <= self.data_end
+
+    def can_repeat(self) -> bool:
+        """At least one full year of data is needed to repeat it for other years."""
+        return self.data_end >= self.data_start + pd.DateOffset(years=1) - timedelta(hours=1, minutes=1)
+
+    def repeated_to_cover(self, start: datetime, end: datetime) -> "TideCurve":
+        """New curve covering [start, end] by repeating the first year of the data for every year.
+        The copies keep the calendar date and time (29 Feb falls back to 28 Feb)."""
+        base = self.df[self.df["time"] < pd.Timestamp(self.data_start) + pd.DateOffset(years=1)]
+        y0 = self.data_start.year
+        k_min = min(start.year - y0 - 1, 0)
+        k_max = max(end.year - y0 + 1, 0)
+        parts = []
+        for k in range(k_min, k_max + 1):
+            part = base.copy()
+            if k:
+                part["time"] = part["time"] + pd.DateOffset(years=k)
+            parts.append(part)
+        df = pd.concat(parts).drop_duplicates("time").sort_values("time").reset_index(drop=True)
+        # a non-leap data year has no 29 Feb: fill it in leap years with the tide of 28 Feb
+        fill = []
+        for year in range(df["time"].iloc[0].year, df["time"].iloc[-1].year + 1):
+            if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0):
+                feb29 = pd.Timestamp(year, 2, 29)
+                if not ((df["time"] >= feb29) & (df["time"] < feb29 + pd.Timedelta(days=1))).any():
+                    day = df[(df["time"] >= feb29 - pd.Timedelta(days=1)) & (df["time"] < feb29)].copy()
+                    day["time"] = day["time"] + pd.Timedelta(days=1)
+                    fill.append(day)
+        if fill:
+            df = pd.concat([df, *fill]).drop_duplicates("time").sort_values("time").reset_index(drop=True)
+        df = df[(df["time"] >= pd.Timestamp(start) - pd.Timedelta(days=2))
+                & (df["time"] <= pd.Timestamp(end) + pd.Timedelta(days=2))].reset_index(drop=True)
+        return TideCurve(df, self.data_start, self.data_end)
 
     def to_hours(self, ts: datetime) -> float:
         return (ts - self.t0) / timedelta(hours=1)
@@ -259,16 +305,34 @@ def _gate(tide, rule, cycle, direction, t, cum, segs, gates, points, restriction
 def plan_installation(*, start: datetime, phases: list[Phase], tide: TideCurve, rule: GateRule,
                       n_cycles: int, restrictions: list[TimeRestriction] | None = None) -> PlanResult:
     """Repeat the cycle n_cycles times from start.
-    restrictions: daily periods in which the vessel may not sail in or out (departure and entry)."""
+    restrictions: daily periods in which the vessel may not sail in or out (departure and entry).
+    With at least one year of tidal data, the data is repeated for other years as far as needed."""
     restrictions = list(restrictions or [])
     validate_phases(phases)
     validate_restrictions(restrictions)
     if n_cycles < 1:
         raise PlanningError("Number of cycles must be at least 1.")
-    if start < tide.t0:
-        raise PlanningError(f"Tidal data starts {tide.t0:%Y-%m-%d %H:%M}, after the start "
-                            f"{start:%Y-%m-%d %H:%M}. Use a later start or a tidal file that covers it.")
 
+    if not tide.can_repeat():
+        if start < tide.t0:
+            raise PlanningError(f"Tidal data starts {tide.t0:%Y-%m-%d %H:%M}, after the start "
+                                f"{start:%Y-%m-%d %H:%M}. Use a later start or a tidal file that covers it "
+                                f"(a file of at least one year is repeated for other years automatically).")
+        return _plan(start, phases, tide, rule, n_cycles, restrictions)
+
+    # first guess of the period needed; doubled when the schedule runs past it
+    nominal = sum(p.hours for p in phases)
+    horizon_h = max(n_cycles * nominal * 2, 24 * 60)
+    for _ in range(12):
+        curve = tide.repeated_to_cover(start, start + timedelta(hours=horizon_h + MAX_WAIT_H))
+        try:
+            return _plan(start, phases, curve, rule, n_cycles, restrictions, raise_data_end=True)
+        except _DataEnd:
+            horizon_h *= 2
+    raise PlanningError("The planning is too long (more than 100 years); check the number of cycles.")
+
+
+def _plan(start, phases, tide, rule, n_cycles, restrictions, raise_data_end=False) -> PlanResult:
     t, cum = start, 0.0
     segments, gates, points, stats = [], [], [(start, 0.0)], []
 
@@ -292,8 +356,11 @@ def plan_installation(*, start: datetime, phases: list[Phase], tide: TideCurve, 
                     t, cum = _gate(tide, rule, cycle, "Entry", t, cum, c_segs, c_gates, c_points,
                                    restrictions)
         except _DataEnd:
+            if raise_data_end:
+                raise
             raise PlanningError(f"Tidal data ends {tide.end:%Y-%m-%d %H:%M} during cycle {cycle}. "
-                                f"Use fewer cycles, an earlier start or a longer tidal file.")
+                                f"Use fewer cycles, an earlier start or a longer tidal file "
+                                f"(a file of at least one year is repeated for other years automatically).")
         segments += c_segs
         gates += c_gates
         points += c_points

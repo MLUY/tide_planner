@@ -32,6 +32,9 @@ Optionally a channel transit time can be set; the rule must then hold for that w
 - Departure: vessel waits alongside after loading until the window opens.
 - Entry: vessel waits outside the port until the window opens; loading starts after entering.
 - Tide is linearly interpolated between data points; rising/falling = sign of the slope. Search step 5 min.
+- Tidal data of one year is repeated for every other year (same calendar date and time), so the
+  planning never runs out of data (before or after the file). Needs at least one full year of data;
+  29 Feb in leap years gets the tide of 28 Feb. Repeated data is marked in the Excel *Tide data* sheet.
 - Cycle rows: any number of *In port* rows, one *Sail to site*, any number of *At site* rows, one *Sail to port*.
 - Tide datum is assumed to be the same as the channel depth datum (chart datum).
 
