@@ -195,6 +195,20 @@ class TideCurve:
         return self.level_cm(hours) >= need
 
 
+_TIME_FORMATS = ("%d/%m/%Y %H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S",
+                 "%d-%m-%Y %H:%M", "%Y/%m/%d %H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M")
+
+
+def _parse_times(raw: pd.Series) -> pd.Series:
+    """Date-times of the tidal file. A fixed format is ~50x faster than guessing per row, so the common
+    formats are tried first (dd/mm/yyyy with a slash, as before); otherwise pandas guesses per row."""
+    for fmt in _TIME_FORMATS:
+        parsed = pd.to_datetime(raw, format=fmt, errors="coerce")
+        if parsed.notna().mean() > 0.99:
+            return parsed
+    return pd.to_datetime(raw, errors="coerce", format="mixed", dayfirst="/" in raw.iloc[0])
+
+
 def load_tide(data: bytes) -> TideCurve:
     """csv: first column date-time, second column tide level in cm."""
     try:
@@ -205,8 +219,8 @@ def load_tide(data: bytes) -> TideCurve:
         raise PlanningError("Tidal data needs two columns: date-time and tide level (cm).")
     df = df.iloc[:, :2].copy()
     df.columns = ["time", "cm"]
-    raw = df["time"].astype(str)
-    df["time"] = pd.to_datetime(raw, errors="coerce", format="mixed", dayfirst="/" in raw.iloc[0])
+    raw = df["time"].astype(str).str.strip()
+    df["time"] = _parse_times(raw)
     df["cm"] = pd.to_numeric(df["cm"], errors="coerce")
     df = df.dropna().drop_duplicates("time").sort_values("time").reset_index(drop=True)
     if len(df) < 2:

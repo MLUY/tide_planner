@@ -1,3 +1,4 @@
+import hashlib
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -48,7 +49,12 @@ def _tide_summary(params, **kwargs) -> str:
     return f"Required tide: **{rising:.0f} cm** on a rising tide, **{falling:.0f} cm** on a falling tide."
 
 
-def _run_plan(params, weather=None):
+def _tide_bytes(params) -> bytes:
+    return params.tide_file.file.getvalue_binary() if params.tide_file else DEFAULT_TIDE.read_bytes()
+
+
+def _run_plan(params, weather=None, tide=None):
+    """Planning for flat params; tide: already loaded TideCurve (loaded from the inputs when None)."""
     if not params.start_date:
         raise vkt.UserError("Please fill in the start date.")
 
@@ -63,8 +69,7 @@ def _run_plan(params, weather=None):
         if params.use_time_restrictions == RESTRICT_YES else []
     start = datetime.combine(params.start_date, datetime.min.time()) + timedelta(hours=float(params.start_hour or 0))
     try:
-        data = params.tide_file.file.getvalue_binary() if params.tide_file else DEFAULT_TIDE.read_bytes()
-        tide = load_tide(data)
+        tide = tide or load_tide(_tide_bytes(params))
         return plan_installation(start=start, phases=phases, tide=tide, rule=rule,
                                  n_cycles=int(params.n_cycles or 0), restrictions=restrictions, weather=weather)
     except PlanningError as exc:
@@ -79,13 +84,20 @@ _PLAN_CACHE: dict = {}
 def _plans(params):
     """(nett planning, gross planning, norm) for flat params; gross = nett without weather downtime.
     Cached, because the output fields and views all need the same plannings."""
-    key = json.dumps(params, default=str, sort_keys=True)
+    # the uploaded tide file is identified by its content (its object text is not unique)
+    data = _tide_bytes(params)
+    key = json.dumps({**{k: v for k, v in params.items() if k != "tide_file"},
+                      "tide_file": hashlib.sha1(data).hexdigest()}, default=str, sort_keys=True)
     if key not in _PLAN_CACHE:
         if len(_PLAN_CACHE) > 20:
             _PLAN_CACHE.clear()
         norm = _selected_norm(params)
-        nett = _run_plan(params)
-        gross = _run_plan(params, weather=norm) if norm else nett
+        try:
+            tide = load_tide(data)              # read the file once for both plannings
+        except PlanningError as exc:
+            raise vkt.UserError(str(exc))
+        nett = _run_plan(params, tide=tide)
+        gross = _run_plan(params, weather=norm, tide=tide) if norm else nett
         _PLAN_CACHE[key] = (nett, gross, norm)
     return _PLAN_CACHE[key]
 
@@ -280,7 +292,8 @@ def build_gantt(res, vessel: str = "") -> go.Figure:
     fig.update_xaxes(rangeslider_visible=True)
     fig.update_layout(
         title=(f"{_basis_text(res)} | {vessel + ' | ' if vessel else ''}{res.cycles} cycles | nominal cycle {res.nominal_cycle_h:.0f} h | "
-               f"finish {res.finish:%Y-%m-%d %H:%M}<br>{_delay_text(res).capitalize()}"),
+               f"start {res.start:%Y-%m-%d %H:%M} | finish {res.finish:%Y-%m-%d %H:%M}<br>"
+               f"{_delay_text(res).capitalize()}"),
         height=520, margin=dict(l=220, t=110), legend_title_text="")
     return fig
 
