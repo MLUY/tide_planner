@@ -1,2 +1,8 @@
 in total project duration table also show total tidal and weather , time restricted delays and add together in total delay
 then show nett cycle / gross cycle in a logic manner
+
+monthly downtime only show one table with two columns
+translate below as default:
+BL2 MP Installation Worst 10hr 57.8 65.5 76.6 81.9 88.7 91.7 84.7 80.6 79.2 69.9 66.7 57.8 74.3
+enable colapsing the table if selected
+
