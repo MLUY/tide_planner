@@ -1,0 +1,17 @@
+Add a feature (optional select) with monthly downtime percentages from SME (Site Metocean Report)
+If selected provide the table with three columns, rows should be the 12 months
+First column is name of norm, second is mws window duration, third is workability percentage per month
+
+pre-fill the table with below norms:
+
+BL2 General 6hr 77.4 80.4 87.9 91.7 95.2 95.8 91.9 87.1 85.0 81.5 80.8 75.8 85.0
+BL2 MP Installation Best 10hr 61.8 69.0 79.3 84.7 91.4 93.1 87.4 83.3 80.6 73.9 69.4 60.5 77.5
+BL2 MP Installation Worst 10hr 57.8 65.5 76.6 81.9 88.7 91.7 84.7 80.6 79.2 69.9 66.7 57.8 74.3
+
+provide selection of what norm should be the basis of the downtime of the operational cycle
+
+provide a section with total project duration:
+provide the cycle time duration the nett duration per cycle
+provide the number of cycles x nett duration per cycle total nett duration
+provide the total gross duration applying the correct workabilty percentages
+if there is no optional selection of monthly percentaqes gross duration is the same as nett duration
