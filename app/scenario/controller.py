@@ -219,18 +219,23 @@ class Parametrization(vkt.Parametrization):
     added_features.downtime_text = vkt.Text(
         "Workability per month from the Site Metocean Report (SME): the percentage of time "
         "in which the operation can be performed within the MWS weather window. "
-        "One row per norm; add or edit rows as needed.\n\n"
+        "One card per norm (add with +, remove with the bin icon); values are workability in %.\n\n"
         "In the gross planning, the vessel waits on weather at site in every cycle for "
         "(working hours of the cycle) x (100 / workability of that month - 1).",
         visible=_DOWNTIME_ON)
-    added_features.downtime_norms = vkt.Table("Workability norms (%)", default=default_table_rows(),
-                                              visible=_DOWNTIME_ON)
-    added_features.downtime_norms.norm = vkt.TextField("Norm")
-    added_features.downtime_norms.mws_h = vkt.NumberField("MWS window", suffix="hr", min=0)
-    for _key, _label in zip(MONTH_KEYS, MONTHS):
-        setattr(added_features.downtime_norms, _key, vkt.NumberField(_label, suffix="%", min=0, max=100))
-    del _key, _label
-    added_features.downtime_norms.year = vkt.NumberField("Year", suffix="%", min=0, max=100)
+    # one card per norm (fits the input panel): name / MWS / year, then Jan-Jun and Jul-Dec
+    added_features.downtime_norms = vkt.DynamicArray("Workability norms - workability per month in %",
+                                                     default=default_table_rows(), row_label="Norm",
+                                                     visible=_DOWNTIME_ON)
+    added_features.downtime_norms.norm = vkt.TextField("Norm", flex=55)
+    added_features.downtime_norms.mws_h = vkt.NumberField("MWS window", suffix="hr", min=0, flex=25)
+    added_features.downtime_norms.year = vkt.NumberField("Year", min=0, max=100, flex=20)
+    added_features.downtime_norms.lb_h1 = vkt.LineBreak()
+    for _i, (_key, _label) in enumerate(zip(MONTH_KEYS, MONTHS)):
+        if _i == 6:
+            added_features.downtime_norms.lb_h2 = vkt.LineBreak()
+        setattr(added_features.downtime_norms, _key, vkt.NumberField(_label, min=0, max=100, flex=16))
+    del _i, _key, _label
     added_features.downtime_norm = vkt.OptionField("Norm used as basis for the downtime", options=_norm_options,
                                                    default=DEFAULT_DOWNTIME_NORM, visible=_DOWNTIME_ON, flex=60)
 

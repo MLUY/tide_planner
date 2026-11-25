@@ -56,8 +56,8 @@ from / until, hours of the day). With **No** (default) the table is hidden and i
 - **Added features**: time restrictions, weather downtime, total project duration.
 
 ## Weather downtime (monthly workability, SME)
-Optional (*Apply monthly downtime percentages?* = Yes). Table with one row per norm: name, MWS window (hr),
-workability % for Jan..Dec and the yearly value from the Site Metocean Report. Pre-filled with
+Optional (*Apply monthly downtime percentages?* = Yes). One card per norm (fits the input panel):
+name, MWS window (hr) and yearly value on the first line, workability % for Jan-Jun and Jul-Dec below. Pre-filled with
 BL2 General (6 hr), BL2 MP Installation Best (10 hr) and BL2 MP Installation Worst (10 hr).
 Select the norm that is the basis for the downtime of the operational cycle.
 
