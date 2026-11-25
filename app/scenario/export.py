@@ -109,19 +109,39 @@ def _summary(ws, res: PlanResult, inputs: dict, dur=None) -> None:
 
     if dur is not None:
         section("Total project duration")
-        line("Nominal cycle (no delays)", _h(dur.nominal_cycle_h), "0.0", "h")
-        line("Nett duration per cycle (incl. tidal / time restriction waits)", _h(dur.nett_cycle_h), "0.0", "h")
-        line("Number of cycles", dur.n_cycles)
-        line("Total nett duration", _h(dur.nett_total_h), "0.0", "h")
-        line("Total nett duration", round(dur.nett_total_h / 24, 2), "0.0", "days")
-        line("Weather downtime norm", f"{dur.norm.name} (MWS {dur.norm.mws_h:g} hr)" if dur.norm
-             else "None - gross = nett")
-        line("Weather downtime", _h(dur.downtime_h), "0.0", "h")
-        line("Gross duration per cycle", _h(dur.gross_cycle_h), "0.0", "h")
-        line("Total gross duration", _h(dur.gross_total_h), "0.0", "h")
-        line("Total gross duration", round(dur.gross_total_h / 24, 2), "0.0", "days")
-        line("Finish (nett)", dur.nett_finish, DT)
-        line("Finish (gross)", dur.gross_finish, DT)
+        n, g = dur.nett_plan, dur.gross_plan
+        for col, title in ((2, "Nett planning"), (3, "Gross planning")):
+            c = ws.cell(row=row, column=col, value=title)
+            c.font, c.fill = HEADER_FONT, HEADER_FILL
+        row += 1
+
+        def line2(label, nett, gross, fmt=None, unit="", bold=False):
+            nonlocal row
+            ws.cell(row=row, column=1, value=label).font = Font(bold=bold)
+            for col, v in ((2, nett), (3, gross)):
+                c = ws.cell(row=row, column=col, value=v)
+                c.font = Font(bold=bold)
+                c.alignment = Alignment(horizontal="left")
+                if fmt:
+                    c.number_format = fmt
+            if unit:
+                ws.cell(row=row, column=4, value=unit)
+            row += 1
+
+        line2("Number of cycles", dur.n_cycles, dur.n_cycles)
+        line2("Nominal cycle (no delays)", _h(dur.nominal_cycle_h), _h(dur.nominal_cycle_h), "0.0", "h")
+        line2("Tidal delay (total)", _h(n.total_tidal_wait_h), _h(g.total_tidal_wait_h), "0.0", "h")
+        line2("Time restriction delay (total)", _h(n.total_restriction_wait_h), _h(g.total_restriction_wait_h),
+              "0.0", "h")
+        line2("Weather downtime (total)", _h(n.total_weather_h), _h(g.total_weather_h), "0.0", "h")
+        line2("Total delay", _h(n.total_wait_h), _h(g.total_wait_h), "0.0", "h", bold=True)
+        line2("Cycle (nominal + total delay / cycles)", _h(dur.nett_cycle_h), _h(dur.gross_cycle_h), "0.0", "h")
+        line2("Total duration", _h(dur.nett_total_h), _h(dur.gross_total_h), "0.0", "h", bold=True)
+        line2("Total duration", round(dur.nett_total_h / 24, 2), round(dur.gross_total_h / 24, 2), "0.0", "days",
+              bold=True)
+        line2("Finish", dur.nett_finish, dur.gross_finish, DT)
+        line2("Weather downtime norm", "-", f"{dur.norm.name} (MWS {dur.norm.mws_h:g} hr)" if dur.norm
+              else "none - gross = nett")
         if dur.norm:
             ws.cell(row=row, column=1, value="Workability per month (%)")
             row += 1
@@ -162,7 +182,8 @@ def _summary(ws, res: PlanResult, inputs: dict, dur=None) -> None:
 
     ws.column_dimensions["A"].width = 42
     ws.column_dimensions["B"].width = 22
-    ws.column_dimensions["C"].width = 8
+    ws.column_dimensions["C"].width = 22
+    ws.column_dimensions["D"].width = 8
     for r in ws.iter_rows(min_col=2, max_col=2):
         r[0].alignment = Alignment(horizontal="left")
 

@@ -53,13 +53,13 @@ from / until, hours of the day). With **No** (default) the table is hidden and i
 
 ## Input tabs
 - **Input**: planning (incl. *Planning basis*), (nett) cycle, vessel, tidal entrance channel, tide.
-- **Added features**: time restrictions, weather downtime, total project duration.
+- **Added features**, in collapsible sections: time restrictions, weather downtime, monthly workability
+  (only shown when weather downtime is switched on) and total project duration.
 
 ## Weather downtime (monthly workability, SME)
-Optional (*Apply monthly downtime percentages?* = Yes). One card per norm (fits the input panel):
-name, MWS window (hr) and yearly value on the first line, workability % for Jan-Jun and Jul-Dec below. Pre-filled with
-BL2 General (6 hr), BL2 MP Installation Best (10 hr) and BL2 MP Installation Worst (10 hr).
-Select the norm that is the basis for the downtime of the operational cycle.
+Optional (*Apply monthly downtime percentages?* = Yes). Section *Monthly workability*: norm name,
+MWS window, yearly value and one table with two columns (month | workability %). Default:
+BL2 MP Installation Worst (10 hr): 57.8 65.5 76.6 81.9 88.7 91.7 84.7 80.6 79.2 69.9 66.7 57.8 (year 74.3).
 
 ## Nett / gross planning
 *Planning basis* (tab Input), default **Gross**:
@@ -70,7 +70,7 @@ Select the norm that is the basis for the downtime of the operational cycle.
 All views and the Excel export follow the selected basis (Weather downtime is shown in grey).
 
 ## Total project duration
-Section in tab *Added features*, view **Project duration** and Excel (Summary + sheet *Weather downtime*):
-- Nett duration per cycle = average cycle of the nett planning (incl. tidal and time restriction waits).
-- Total nett duration = number of cycles x nett duration per cycle.
-- Total gross duration = duration of the gross planning.
+Section in tab *Added features*, view **Project duration** and Excel (Summary + sheet *Weather downtime*),
+nett and gross planning side by side: number of cycles, nominal cycle, tidal / time restriction /
+weather delays and their total, cycle (nominal + total delay / cycles), total duration (cycles x cycle),
+start and finish.

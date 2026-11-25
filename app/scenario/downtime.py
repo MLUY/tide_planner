@@ -51,11 +51,21 @@ class DurationResult:
     gross_finish: datetime
     norm: Norm | None = None
     months: list = field(default_factory=list)   # per calendar month: month, pct, cycles, downtime_h
+    nett_plan: object = None          # planning.PlanResult without weather downtime
+    gross_plan: object = None         # planning.PlanResult with weather downtime (= nett_plan without norm)
 
     @property
     def effective_pct(self) -> float:
         work = self.n_cycles * self.nominal_cycle_h
         return 100 * work / (work + self.downtime_h) if self.downtime_h else 100.0
+
+
+DEFAULT_NORM = DEFAULT_NORMS[2]   # BL2 MP Installation Worst (default in the app)
+
+
+def default_month_rows(norm=DEFAULT_NORM) -> list[dict]:
+    """Rows for the two-column table: month | workability (%)."""
+    return [dict(month=m, pct=v) for m, v in zip(MONTHS, norm[2])]
 
 
 def default_table_rows() -> list[dict]:
@@ -95,4 +105,5 @@ def project_duration(nett, gross=None, norm: Norm | None = None) -> DurationResu
         gross_cycle_h=total(gross) / gross.cycles, gross_total_h=total(gross),
         downtime_h=gross.total_weather_h if gross is not nett else 0.0,
         start=nett.start, nett_finish=nett.finish, gross_finish=gross.finish,
-        norm=norm if gross is not nett else None, months=[months[k] for k in sorted(months)])
+        norm=norm if gross is not nett else None, months=[months[k] for k in sorted(months)],
+        nett_plan=nett, gross_plan=gross)

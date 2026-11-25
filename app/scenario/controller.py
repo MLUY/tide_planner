@@ -9,7 +9,7 @@ from munch import Munch
 from plotly.subplots import make_subplots
 import viktor as vkt
 
-from .downtime import (MONTH_KEYS, MONTHS, DowntimeError, Norm, default_table_rows, project_duration,
+from .downtime import (DEFAULT_NORM, MONTHS, DowntimeError, Norm, default_month_rows, project_duration,
                        validate_norm)
 from .export import build_excel
 from .planning import (DEFAULT_CYCLE, PHASE_TYPES, GateRule, Phase, PlanningError, TimeRestriction,
@@ -20,18 +20,18 @@ COLORS = {"Port": "#8c564b", "Sailing": "#1f77b4", "Installation": "#2ca02c", "T
 WAIT_CATEGORIES = ("Tidal wait", "Time restriction wait", "Weather downtime")
 RESTRICT_NO, RESTRICT_YES = "No", "Yes"
 BASIS_GROSS, BASIS_NETT = "Gross (incl. weather downtime)", "Nett (excl. weather downtime)"
-DEFAULT_DOWNTIME_NORM = "BL2 MP Installation Best"
 DEFAULT_TIDE = Path(__file__).resolve().parents[2] / "sample_data" / "gunsan_tide_2026_hourly.csv"
 TABS = ("input", "added_features")
+SECTIONS = ("restrictions", "weather", "workability", "duration")   # collapsible sections in 'Added features'
 
 
 def _flat(params):
-    """The inputs are split over tabs (params.input.x, params.added_features.y); the calculations
-    use one flat set of inputs (params.x). Field names are unique over the tabs."""
+    """The inputs are split over tabs and sections (params.input.x, params.added_features.weather.y);
+    the calculations use one flat set of inputs (params.x). Field names are unique over all of them."""
     out = Munch()
     for key, value in (params or {}).items():
-        if key in TABS and isinstance(value, dict):
-            out.update(value)
+        if key in TABS + SECTIONS and isinstance(value, dict):
+            out.update(_flat(value))
         else:
             out[key] = value
     return out
@@ -71,8 +71,8 @@ def _run_plan(params, weather=None):
         raise vkt.UserError(str(exc))
 
 
-_RESTRICT_ON = vkt.IsEqual(vkt.Lookup("added_features.use_time_restrictions"), RESTRICT_YES)
-_DOWNTIME_ON = vkt.IsEqual(vkt.Lookup("added_features.use_downtime"), RESTRICT_YES)
+_RESTRICT_ON = vkt.IsEqual(vkt.Lookup("added_features.restrictions.use_time_restrictions"), RESTRICT_YES)
+_DOWNTIME_ON = vkt.IsEqual(vkt.Lookup("added_features.weather.use_downtime"), RESTRICT_YES)
 _PLAN_CACHE: dict = {}
 
 
@@ -96,27 +96,17 @@ def _view_plan(params):
     return nett if params.planning_basis == BASIS_NETT else gross
 
 
-def _norm_rows(params):
-    return [r for r in (params.downtime_norms or []) if (r.norm or "").strip()]
-
-
-def _norm_options(params, **kwargs):
-    return [r.norm.strip() for r in _norm_rows(_flat(params))] or [default_table_rows()[0]["norm"]]
-
-
 def _selected_norm(params):
+    """The workability norm from the two-column month table, or None when weather downtime is off."""
     if params.use_downtime != RESTRICT_YES:
         return None
-    rows = _norm_rows(params)
-    if not rows:
-        raise vkt.UserError("Monthly downtime is switched on, but the norm table is empty.")
-    chosen = (params.downtime_norm or "").strip()
-    row = next((r for r in rows if r.norm.strip() == chosen), None)
-    if row is None:
-        raise vkt.UserError("Select the norm that is the basis for the weather downtime.")
-    norm = Norm(name=row.norm.strip(), mws_h=float(row.mws_h or 0),
-                monthly_pct=[None if row[k] is None else float(row[k]) for k in MONTH_KEYS],
-                year_pct=None if row.year is None else float(row.year))
+    rows = list(params.downtime_months or [])
+    if len(rows) != 12:
+        raise vkt.UserError(f"The monthly workability table needs 12 rows (Jan-Dec); it has {len(rows)}.")
+    norm = Norm(name=(params.downtime_name or "").strip() or "Workability norm",
+                mws_h=float(params.downtime_mws_h or 0),
+                monthly_pct=[None if r.pct is None else float(r.pct) for r in rows],
+                year_pct=None if params.downtime_year is None else float(params.downtime_year))
     try:
         validate_norm(norm)
     except DowntimeError as exc:
@@ -195,10 +185,11 @@ class Parametrization(vkt.Parametrization):
 
     # ---------------- tab 2: time restrictions, weather downtime, project duration ----------------
     added_features = vkt.Tab("Added features")
-    added_features.restriction_title = vkt.Text("### Time restrictions - sailing in/out of port")
-    added_features.use_time_restrictions = vkt.OptionField("Apply time restrictions?",
-                                                           options=[RESTRICT_NO, RESTRICT_YES], default=RESTRICT_NO)
-    added_features.restriction_text = vkt.Text(
+
+    added_features.restrictions = vkt.Section("Time restrictions - sailing in/out of port", initially_expanded=True)
+    added_features.restrictions.use_time_restrictions = vkt.OptionField(
+        "Apply time restrictions?", options=[RESTRICT_NO, RESTRICT_YES], default=RESTRICT_NO)
+    added_features.restrictions.restriction_text = vkt.Text(
         "Daily periods in which the vessel may **not sail in or out** of the port "
         "(e.g. no night transits). The vessel waits (alongside for departure, outside "
         "the port for entry) until the period has ended, on top of the tidal window. "
@@ -207,56 +198,58 @@ class Parametrization(vkt.Parametrization):
         "Add one row per time slot (e.g. night closure, pilot shift change); "
         "any number of slots can be combined and they may overlap.",
         visible=_RESTRICT_ON)
-    added_features.time_restrictions = vkt.Table("Time restrictions", visible=_RESTRICT_ON)
-    added_features.time_restrictions.description = vkt.TextField("Description")
-    added_features.time_restrictions.from_h = vkt.NumberField("Not allowed from", suffix="h", min=0, max=24)
-    added_features.time_restrictions.to_h = vkt.NumberField("Not allowed until", suffix="h", min=0, max=24)
+    added_features.restrictions.time_restrictions = vkt.Table("Time restrictions", visible=_RESTRICT_ON)
+    added_features.restrictions.time_restrictions.description = vkt.TextField("Description")
+    added_features.restrictions.time_restrictions.from_h = vkt.NumberField("Not allowed from", suffix="h",
+                                                                           min=0, max=24)
+    added_features.restrictions.time_restrictions.to_h = vkt.NumberField("Not allowed until", suffix="h",
+                                                                         min=0, max=24)
 
-    added_features.lb6 = vkt.LineBreak()
-    added_features.downtime_title = vkt.Text("### Weather downtime - monthly workability (SME)")
-    added_features.use_downtime = vkt.OptionField("Apply monthly downtime percentages?",
-                                                  options=[RESTRICT_NO, RESTRICT_YES], default=RESTRICT_NO)
-    added_features.downtime_text = vkt.Text(
-        "Workability per month from the Site Metocean Report (SME): the percentage of time "
-        "in which the operation can be performed within the MWS weather window. "
-        "One card per norm (add with +, remove with the bin icon); values are workability in %.\n\n"
-        "In the gross planning, the vessel waits on weather at site in every cycle for "
-        "(working hours of the cycle) x (100 / workability of that month - 1).",
+    added_features.weather = vkt.Section("Weather downtime (SME)", initially_expanded=True)
+    added_features.weather.use_downtime = vkt.OptionField("Apply monthly downtime percentages?",
+                                                          options=[RESTRICT_NO, RESTRICT_YES], default=RESTRICT_NO)
+    added_features.weather.downtime_text = vkt.Text(
+        "Workability per month from the Site Metocean Report (SME): the percentage of time in which the "
+        "operation can be performed within the MWS weather window. In the gross planning, the vessel waits "
+        "on weather at site in every cycle for (working hours of the cycle) x (100 / workability of that "
+        "month - 1). The table is in the section *Monthly workability* below (collapsible).",
         visible=_DOWNTIME_ON)
-    # one card per norm (fits the input panel): name / MWS / year, then Jan-Jun and Jul-Dec
-    added_features.downtime_norms = vkt.DynamicArray("Workability norms - workability per month in %",
-                                                     default=default_table_rows(), row_label="Norm",
-                                                     visible=_DOWNTIME_ON)
-    added_features.downtime_norms.norm = vkt.TextField("Norm", flex=55)
-    added_features.downtime_norms.mws_h = vkt.NumberField("MWS window", suffix="hr", min=0, flex=25)
-    added_features.downtime_norms.year = vkt.NumberField("Year", min=0, max=100, flex=20)
-    added_features.downtime_norms.lb_h1 = vkt.LineBreak()
-    for _i, (_key, _label) in enumerate(zip(MONTH_KEYS, MONTHS)):
-        if _i == 6:
-            added_features.downtime_norms.lb_h2 = vkt.LineBreak()
-        setattr(added_features.downtime_norms, _key, vkt.NumberField(_label, min=0, max=100, flex=16))
-    del _i, _key, _label
-    added_features.downtime_norm = vkt.OptionField("Norm used as basis for the downtime", options=_norm_options,
-                                                   default=DEFAULT_DOWNTIME_NORM, visible=_DOWNTIME_ON, flex=60)
 
-    added_features.lb7 = vkt.LineBreak()
-    added_features.duration_title = vkt.Text("### Total project duration")
-    added_features.out_nominal = vkt.OutputField("Nominal cycle (no delays)",
-                                                 value=_out(lambda d: _fmt_h(d.nominal_cycle_h)), flex=50)
-    added_features.out_nett_cycle = vkt.OutputField("Nett duration per cycle (incl. tidal / time restriction waits)",
-                                                    value=_out(lambda d: _fmt_h(d.nett_cycle_h)), flex=50)
-    added_features.out_nett_total = vkt.OutputField("Total nett duration (cycles x nett per cycle)",
-                                                    value=_out(lambda d: f"{d.n_cycles} x {d.nett_cycle_h:.1f} h = "
-                                                                         f"{_fmt_h(d.nett_total_h)}"), flex=100)
-    added_features.out_gross_total = vkt.OutputField(
-        "Total gross duration (incl. weather downtime)",
-        value=_out(lambda d: _fmt_h(d.gross_total_h)
-                   + (f" - norm {d.norm.name}, weather downtime {d.downtime_h:,.1f} h"
-                      if d.norm else " - no weather downtime applied (gross = nett)")), flex=100)
-    added_features.out_finish = vkt.OutputField(
+    # separate section, so the table can be collapsed while the selection above stays visible
+    added_features.workability = vkt.Section("Monthly workability", initially_expanded=True, visible=_DOWNTIME_ON)
+    added_features.workability.downtime_name = vkt.TextField("Norm", default=DEFAULT_NORM[0], flex=100)
+    added_features.workability.downtime_mws_h = vkt.NumberField("MWS window", suffix="hr", default=DEFAULT_NORM[1],
+                                                                min=0, flex=50)
+    added_features.workability.downtime_year = vkt.NumberField("Year (SME)", suffix="%", default=DEFAULT_NORM[3],
+                                                               min=0, max=100, flex=50)
+    added_features.workability.downtime_months = vkt.Table("Workability per month",
+                                                           default=default_month_rows())
+    added_features.workability.downtime_months.month = vkt.TextField("Month")
+    added_features.workability.downtime_months.pct = vkt.NumberField("Workability", suffix="%", min=0, max=100)
+
+    added_features.duration = vkt.Section("Total project duration", initially_expanded=True)
+    added_features.duration.out_cycles = vkt.OutputField(
+        "Number of cycles / nominal cycle (no delays)",
+        value=_out(lambda d: f"{d.n_cycles} cycles of {d.nominal_cycle_h:.1f} h"), flex=100)
+    added_features.duration.out_delays = vkt.OutputField(
+        "Delays gross planning: tidal + time restriction + weather = total",
+        value=_out(lambda d: f"{d.gross_plan.total_tidal_wait_h:,.1f} + {d.gross_plan.total_restriction_wait_h:,.1f} + "
+                             f"{d.gross_plan.total_weather_h:,.1f} = {d.gross_plan.total_wait_h:,.1f} h "
+                             f"({d.gross_plan.total_wait_h / 24:,.1f} days)"), flex=100)
+    added_features.duration.out_nett_cycle = vkt.OutputField(
+        "Nett cycle (nominal + tidal / time restriction delays)",
+        value=_out(lambda d: _fmt_h(d.nett_cycle_h)), flex=50)
+    added_features.duration.out_gross_cycle = vkt.OutputField(
+        "Gross cycle (nominal + all delays incl. weather)", value=_out(lambda d: _fmt_h(d.gross_cycle_h)), flex=50)
+    added_features.duration.out_nett_total = vkt.OutputField(
+        "Total nett duration", value=_out(lambda d: f"{d.n_cycles} x {d.nett_cycle_h:.1f} h = "
+                                                    f"{_fmt_h(d.nett_total_h)}"), flex=50)
+    added_features.duration.out_gross_total = vkt.OutputField(
+        "Total gross duration", value=_out(lambda d: f"{d.n_cycles} x {d.gross_cycle_h:.1f} h = "
+                                                     f"{_fmt_h(d.gross_total_h)}"), flex=50)
+    added_features.duration.out_finish = vkt.OutputField(
         "Finish nett / gross", value=_out(lambda d: f"{d.nett_finish:%Y-%m-%d %H:%M} / {d.gross_finish:%Y-%m-%d %H:%M}"),
-        flex=60)
-
+        flex=100)
 
 def _basis_text(res) -> str:
     return f"Gross planning ({res.weather.name})" if res.weather else "Nett planning"
@@ -410,27 +403,49 @@ def build_cycle_table(res) -> go.Figure:
     return fig
 
 
+def _duration_rows(d) -> list[tuple]:
+    """(label, nett planning, gross planning) - in the order nominal -> delays -> cycle -> total."""
+    n, g = d.nett_plan, d.gross_plan
+
+    def h(x):
+        return f"{x:,.1f} h"
+
+    def hd(x):
+        return f"{x:,.1f} h ({x / 24:,.1f} d)"
+    return [
+        ("Number of cycles", f"{d.n_cycles}", f"{d.n_cycles}"),
+        ("Nominal cycle (no delays)", h(d.nominal_cycle_h), h(d.nominal_cycle_h)),
+        ("Tidal delay (total)", hd(n.total_tidal_wait_h), hd(g.total_tidal_wait_h)),
+        ("Time restriction delay (total)", hd(n.total_restriction_wait_h), hd(g.total_restriction_wait_h)),
+        ("Weather downtime (total)", hd(n.total_weather_h), hd(g.total_weather_h)),
+        ("<b>Total delay</b>", f"<b>{hd(n.total_wait_h)}</b>", f"<b>{hd(g.total_wait_h)}</b>"),
+        ("Cycle (nominal + total delay / cycles)", h(d.nett_cycle_h), h(d.gross_cycle_h)),
+        ("<b>Total duration</b> (cycles x cycle)",
+         f"<b>{d.n_cycles} x {d.nett_cycle_h:.1f} h = {d.nett_total_h / 24:,.1f} d</b>",
+         f"<b>{d.n_cycles} x {d.gross_cycle_h:.1f} h = {d.gross_total_h / 24:,.1f} d</b>"),
+        ("Start", f"{d.start:%Y-%m-%d %H:%M}", f"{d.start:%Y-%m-%d %H:%M}"),
+        ("Finish", f"{d.nett_finish:%Y-%m-%d %H:%M}", f"{d.gross_finish:%Y-%m-%d %H:%M}"),
+        ("Weather downtime norm", "-",
+         f"{d.norm.name} (MWS {d.norm.mws_h:g} hr), effective workability {d.effective_pct:.1f} %"
+         if d.norm else "none - gross = nett"),
+    ]
+
+
 def build_duration(d) -> go.Figure:
-    rows = [("Nominal cycle (no delays)", _fmt_h(d.nominal_cycle_h)),
-            ("Nett duration per cycle (incl. tidal / time restriction waits)", _fmt_h(d.nett_cycle_h)),
-            ("Number of cycles", f"{d.n_cycles}"),
-            ("Total nett duration", f"{d.n_cycles} x {d.nett_cycle_h:.1f} h = {_fmt_h(d.nett_total_h)}"),
-            ("Weather downtime norm", f"{d.norm.name} (MWS {d.norm.mws_h:g} hr)" if d.norm else "None (not applied)"),
-            ("Weather downtime", _fmt_h(d.downtime_h)),
-            ("Gross duration per cycle", _fmt_h(d.gross_cycle_h)),
-            ("Total gross duration", _fmt_h(d.gross_total_h)),
-            ("Effective workability (work / (work + weather))", f"{d.effective_pct:.1f} %"),
-            ("Start", f"{d.start:%Y-%m-%d %H:%M}"),
-            ("Finish nett / gross", f"{d.nett_finish:%Y-%m-%d %H:%M}  /  {d.gross_finish:%Y-%m-%d %H:%M}")]
-    table = go.Table(columnwidth=[3, 4], header=dict(values=["Project duration", ""], align="left"),
-                     cells=dict(values=[[r[0] for r in rows], [r[1] for r in rows]], align="left"))
+    rows = _duration_rows(d)
+    fill = ["#EEF3F9" if i % 2 else "white" for i in range(len(rows))]
+    table = go.Table(columnwidth=[3, 3, 3],
+                     header=dict(values=["<b>Project duration</b>", "<b>Nett planning</b>", "<b>Gross planning</b>"],
+                                 align="left", fill_color="#C8D4E3", height=28),
+                     cells=dict(values=[[r[0] for r in rows], [r[1] for r in rows], [r[2] for r in rows]],
+                                align="left", height=24, fill_color=[fill, fill, fill]))
     if not d.norm:
         fig = go.Figure(table)
         fig.update_layout(title="Total project duration - no weather downtime applied (gross = nett)", height=420,
                           margin=dict(t=60, b=20, l=60, r=20))
         return fig
     # table on top (fixed height so all rows are visible), compact bar chart below
-    fig = make_subplots(rows=2, cols=1, row_heights=[0.56, 0.44], vertical_spacing=0.04,
+    fig = make_subplots(rows=2, cols=1, row_heights=[0.62, 0.38], vertical_spacing=0.04,
                         specs=[[{"type": "table"}], [{"type": "xy"}]])
     fig.add_trace(table, row=1, col=1)
     # month, workability and number of cycles under the bar; the days inside the bar (always horizontal)
@@ -448,7 +463,7 @@ def build_duration(d) -> go.Figure:
         row=2, col=1)
     fig.update_yaxes(title_text="Days", rangemode="tozero", row=2, col=1)
     fig.update_xaxes(tickfont=dict(size=11), row=2, col=1)
-    fig.update_layout(height=640, margin=dict(t=80, b=20, l=60, r=20), showlegend=False, bargap=0.2,
+    fig.update_layout(height=680, margin=dict(t=75, b=15, l=60, r=20), showlegend=False, bargap=0.2,
                       uniformtext=dict(minsize=11, mode="show"),
                       title=f"Total project duration - nett {d.nett_total_h / 24:.1f} days, gross "
                             f"{d.gross_total_h / 24:.1f} days ({d.norm.name})<br><sup>Weather downtime per month "
