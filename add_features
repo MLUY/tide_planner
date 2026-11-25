@@ -1,7 +1,3 @@
-the layout of the input field looks very clutered, i want to make more input tabs
-
-the first tab to only contain planning / (nett) cycle / vessel / tidal entrence channel / tide
-
-the second tab named added features to contain time restrictions / weather downtime / project duration
-
-selection should be possible for the planning based on nett or gross planning, default should always be gross
+can you optimise the layout of the workability table?
+it does not fit on the screemn and looks very clunky
+please provide a better way to display this
