@@ -1,3 +1,7 @@
 can you optimise the layout of the workability table?
 it does not fit on the screemn and looks very clunky
 please provide a better way to display this
+
+weather downtime please also add number of days per month inside the bars
+color thee bars a friendly color (not grey)
+project duration table fits on the screen (if nessacary by reducing the height of the weather downtime graph)
