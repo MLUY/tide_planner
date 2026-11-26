@@ -79,10 +79,10 @@ def default_table_rows() -> list[dict]:
 
 def validate_norm(norm: Norm) -> None:
     if len(norm.monthly_pct) != 12:
-        raise DowntimeError(f"Norm '{norm.name}' needs 12 monthly percentages.")
+        raise DowntimeError("Weather downtime: the workability table needs 12 monthly percentages.")
     for m, p in zip(MONTHS, norm.monthly_pct):
         if p is None or not 0 < p <= 100:
-            raise DowntimeError(f"Norm '{norm.name}': workability for {m} must be more than 0 and at most 100 %.")
+            raise DowntimeError(f"Weather downtime: workability for {m} must be more than 0 and at most 100 %.")
 
 
 def project_duration(nett, gross=None, norm: Norm | None = None) -> DurationResult:

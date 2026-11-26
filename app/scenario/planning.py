@@ -410,7 +410,7 @@ def _plan(start, phases, tide, rule, n_cycles, restrictions, raise_data_end=Fals
                         c_points.append((t, cum))
                         c_segs.append(dict(
                             cycle=cycle, activity="Weather downtime (at site)", category=CAT_WEATHER,
-                            detail=(f"Waiting on weather at site: {weather.name}, {t:%b} workability {pct:.1f} % "
+                            detail=(f"Waiting on weather at site: {t:%b} workability {pct:.1f} % "
                                     f"-> {work_h:.1f} h work x (100/{pct:.1f} - 1)"),
                             start=t, finish=fin, hours=wait, workability_pct=pct))
                         t, cum = fin, cum + wait

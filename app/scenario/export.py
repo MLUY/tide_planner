@@ -92,8 +92,7 @@ def _summary(ws, res: PlanResult, inputs: dict, dur=None) -> None:
             ws.cell(row=row, column=3, value=unit)
         row += 1
 
-    section("Results - " + (f"gross planning (incl. weather downtime, {res.weather.name})" if res.weather
-                             else "nett planning (excl. weather downtime)"))
+    section("Results - " + ("gross planning (incl. weather)" if res.weather else "nett planning (excl. weather)"))
     avg = sum(c["hours"] for c in res.cycle_stats) / len(res.cycle_stats)
     line("Start", res.start, DT)
     line("Finish", res.finish, DT)
@@ -140,8 +139,6 @@ def _summary(ws, res: PlanResult, inputs: dict, dur=None) -> None:
         line2("Total duration", round(dur.nett_total_h / 24, 2), round(dur.gross_total_h / 24, 2), "0.0", "days",
               bold=True)
         line2("Finish", dur.nett_finish, dur.gross_finish, DT)
-        line2("Weather downtime norm", "-", f"{dur.norm.name} (MWS {dur.norm.mws_h:g} hr)" if dur.norm
-              else "none - gross = nett")
         if dur.norm:
             ws.cell(row=row, column=1, value="Workability per month (%)")
             row += 1

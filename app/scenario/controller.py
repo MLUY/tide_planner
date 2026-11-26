@@ -306,7 +306,7 @@ class Parametrization(vkt.Parametrization):
         description="Recalculate the planning and redraw all views.")
 
 def _basis_text(res) -> str:
-    return f"Gross planning ({res.weather.name})" if res.weather else "Nett planning"
+    return "Gross planning (incl. weather)" if res.weather else "Nett planning (excl. weather)"
 
 
 def _delay_text(res) -> str:
@@ -520,9 +520,6 @@ def _duration_rows(d) -> list[tuple]:
          f"<b>{d.n_cycles} x {d.gross_cycle_h:.1f} h = {d.gross_total_h / 24:,.1f} d</b>"),
         ("Start", f"{d.start:%Y-%m-%d %H:%M}", f"{d.start:%Y-%m-%d %H:%M}"),
         ("Finish", f"{d.nett_finish:%Y-%m-%d %H:%M}", f"{d.gross_finish:%Y-%m-%d %H:%M}"),
-        ("Weather downtime norm", "-",
-         f"{d.norm.name} (MWS {d.norm.mws_h:g} hr), effective workability {d.effective_pct:.1f} %"
-         if d.norm else "none - gross = nett"),
     ]
 
 
@@ -562,7 +559,7 @@ def build_duration(d) -> go.Figure:
     fig.update_layout(height=680, margin=dict(t=75, b=15, l=60, r=20), showlegend=False, bargap=0.2,
                       uniformtext=dict(minsize=11, mode="show"),
                       title=f"Total project duration - nett {d.nett_total_h / 24:.1f} days, gross "
-                            f"{d.gross_total_h / 24:.1f} days ({d.norm.name})<br><sup>Weather downtime per month "
+                            f"{d.gross_total_h / 24:.1f} days (incl. weather)<br><sup>Weather downtime per month "
                             f"(month of arrival at site) - label: workability of the month and number of cycles</sup>")
     return fig
 
@@ -671,7 +668,9 @@ def build_sensitivity(sens, bucket=0.0) -> go.Figure:
     fig.update_layout(
         height=800 if rows == 2 else 540, bargap=0, margin=dict(t=115, b=40, l=60, r=20),
         legend=dict(orientation="h", x=0.5, xanchor="center", y=1.01, yanchor="bottom", font=dict(size=11)),
-        title=(f"Start date sensitivity - {metric.lower()}, {sens['basis']} planning, start ± {sens['n']} days "
+        title=(f"Start date sensitivity - {metric.lower()}, "
+               f"{'gross planning (incl. weather)' if sens['basis'] == 'gross' else 'nett planning (excl. weather)'}, "
+               f"start ± {sens['n']} days "
                f"({step})<br><sup>most common {labels[mode]} {unit} ({pct[mode]:.0f} %) | average {mean:.1f} | "
                f"P50 {p50:.1f} | P90 {p90:.1f} | min {conv(sens['min']):.1f} | max {conv(sens['max']):.1f} {unit}"
                f"</sup>"))
@@ -716,15 +715,8 @@ class Scenario(vkt.Controller):
 
     @vkt.PlotlyView("Planning (Gantt)", duration_guess=2)
     def gantt_view(self, params, **kwargs):
-        raw = params
         params = _flat(params)
-        res = _view_plan(params)
-        # diagnostic line in the viktor-cli terminal: which inputs the view received and what it shows
-        print(f"[tide planner] {datetime.now():%H:%M:%S} Gantt view calculated | monthly downtime = "
-              f"{params.use_downtime!r} | time restrictions = {params.use_time_restrictions!r} | start = "
-              f"{res.start:%Y-%m-%d %H:%M} | title = {_basis_text(res)!r} | weather {res.total_weather_h:.0f} h | "
-              f"input keys = {sorted(raw.keys()) if hasattr(raw, 'keys') else type(raw).__name__}", flush=True)
-        return _result(build_gantt(res, (params.vessel_name or "").strip()), params)
+        return _result(build_gantt(_view_plan(params), (params.vessel_name or "").strip()), params)
 
     @vkt.PlotlyView("Tide and cycles", duration_guess=2)
     def tide_cycles_view(self, params, **kwargs):
