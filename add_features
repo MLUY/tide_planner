@@ -1,17 +1,23 @@
+apply vessel draft loaded and vessel draft empty and incorporate this into planning
+so entry will be with a lesser draft then departure which is now not taken into consideration
 
-remove project duration from added features tab
+remove the start date sensitivity tab and the variance tab removed
+remove tidal delay tab
 
-remove added features tab and shift information into new tabs as below :
+the analysis should now only be based on a simulation run using the variance in the cycle
 
-"weather", "variance","time constraints", "download" 
+on the bottom of the input sheet there should be a simulation section
+first showing the number of runs as input  (default 300)
+blue button with simulate
 
-keep input tab with following changes
+the generated charts should be based on the most likely cycle duration
+either basing it on nett (ex weather) or gross (inc weather)
 
-download planning button shift to download tab
+so results to be displayed in tabe:
+"planning", "cycle", "table", "simulation", "durations"
 
-move vessel information to the top of the screen
-planning section should be next
-(Nett) cycle should be next
-Tidal entrance channel should be next
-Tide should be next
+check total tidal downtime percentages between nett and gross are similar
+
+
+
 
