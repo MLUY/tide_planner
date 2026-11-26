@@ -1,0 +1,158 @@
+Application Purpose
+
+Develop a web application to generate a transport schedule for barges transporting monopiles from a fabrication yard to a marshalling port.
+
+The application structure, navigation and layout shall follow the existing repository:
+
+https://github.com/MLUY/tidal_transport
+
+Input Tab
+Application Header
+Title
+
+Tidal Transport Planner
+
+Description
+
+Short description:
+
+This application generates transport schedules for monopile transport barges while considering cargo weight classes, barge configurations and tidal restrictions.
+
+Barge Data
+
+The user shall be able to define a fleet of barges.
+
+Each barge shall have:
+
+Field	Type
+Name	Text
+Configuration	Single / Double
+
+Default barges:
+
+Name	Configuration
+barge_1	Double
+barge_2	Double
+barge_3	Single
+
+Rules:
+Single Configuration
+Can carry exactly 1 monopile.
+Cannot carry 2 monopiles.
+Double Configuration
+Can carry:
+1 monopile
+2 monopile
+
+Cargo Weight Classes
+User shall define cargo classes.
+Default values:
+
+Class	From Weight (t)	To Weight (t)
+A	1000	1200
+B	1200	1400
+C	1400	1600
+D	1600	1800
+
+The number of classes shall be editable.
+
+barge cycle
+user shall define a barge cycle per barge
+
+activity hr
+loading per monopile 24hr
+sailing 96hr
+discharging 2hr
+
+discharging can only take place when tide is higher than indicated in the barge table
+if discharging cannot take place barge needs to wait until tide reaches the level
+
+Tide Restrictions Matrix
+
+Based on the barges defined above, the application shall automatically generate a tide restriction table.
+
+The matrix defines the minimum required tide level (cm) for each operating condition.
+
+Single Monopile Transport
+
+For every barge, one row shall be generated representing:
+Single monopile transport.
+Minimum required tide level per cargo class.
+
+Default:
+
+Name	Configuration	A	B	C	D
+barge_1	Single	600	620	640	660
+barge_2	Single	600	620	640	660
+barge_3	Single	600	620	640	x
+Double Monopile Transport
+
+Only available for barges with configuration = Double.
+
+One additional row shall be generated.
+
+Rules:
+
+Tide requirement is determined by the heaviest monopile on board.
+Class shown represents the highest class carried.
+"x" indicates that cargo combination is not permitted.
+
+Default:
+
+Name	Configuration	A	B	C	D
+barge_1	Double	650	700	x	x
+barge_2	Double	650	700	x	x
+
+The fabricator has a delivery schedule for a number of monopiles
+
+as a default generate a table for the delivery schedule with 5 columns
+1 load out number / 2 name / 3 weight / 4 earliest / 5 latest
+
+generate as default the following
+
+number	location	weight	earliest	latest
+1	OSS	1520	06/03/2028	21/03/2028
+2	WTG-31	1368.3	07/03/2028	22/03/2028
+3	WTG-34	1206.1	08/03/2028	23/03/2028
+4	WTG-33	1258.1	16/03/2028	31/03/2028
+5	WTG-07	1374.7	17/03/2028	01/04/2028
+6	WTG-06	1427.8	26/03/2028	10/04/2028
+7	WTG-05	1526.5	27/03/2028	11/04/2028
+8	WTG-13	1588	04/04/2028	19/04/2028
+9	WTG-25	1438.3	05/04/2028	20/04/2028
+10	WTG-32	1250.4	13/04/2028	28/04/2028
+11	WTG-30	1207.4	14/04/2028	29/04/2028
+12	WTG-36	1343.1	22/04/2028	07/05/2028
+13	WTG-24	1387	23/04/2028	08/05/2028
+14	WTG-16	1506	01/05/2028	16/05/2028
+15	WTG-23	1603.9	02/05/2028	17/05/2028
+16	WTG-03	1309.6	10/05/2028	25/05/2028
+17	WTG-02	1357	11/05/2028	26/05/2028
+18	WTG-22	1478.3	19/05/2028	03/06/2028
+19	WTG-10	1401.7	20/05/2028	04/06/2028
+20	WTG-01	1446.4	02/06/2028	17/06/2028
+21	WTG-35	1412.1	03/06/2028	18/06/2028
+22	WTG-08	1373.7	11/06/2028	26/06/2028
+23	WTG-15	1291.7	12/06/2028	27/06/2028
+24	WTG-14	1282.9	20/06/2028	05/07/2028
+25	WTG-12	1247.9	21/06/2028	06/07/2028
+26	WTG-04	1526.5	04/07/2028	19/07/2028
+27	WTG-11	1440	05/07/2028	20/07/2028
+28	WTG-21	1358.2	13/07/2028	28/07/2028
+29	WTG-20	1391.9	14/07/2028	29/07/2028
+30	WTG-19	1325.3	01/08/2028	16/08/2028
+31	WTG-09	1146	02/08/2028	17/08/2028
+32	WTG-27	1724.7	10/08/2028	25/08/2028
+33	WTG-26	1579.6	11/08/2028	26/08/2028
+34	WTG-17	1611	19/08/2028	03/09/2028
+35	WTG-18	1596	20/08/2028	04/09/2028
+36	WTG-29	1401.9	27/08/2028	11/09/2028
+37	WTG-28	1250.9	31/08/2028	15/09/2028
+
+The tidal data is to be provided as per the file and setup in https://github.com/MLUY/tidal_transport
+
+output should be similar as per https://github.com/MLUY/tidal_transport
+
+gant planning chart
+cycle showing load-in only (as this is tidal data atthe load in port)
+
