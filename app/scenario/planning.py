@@ -147,11 +147,15 @@ class TideCurve:
 
     def repeated_to_cover(self, start: datetime, end: datetime) -> "TideCurve":
         """New curve covering [start, end] by repeating the first year of the data for every year.
-        The copies keep the calendar date and time (29 Feb falls back to 28 Feb)."""
-        base = self.df[self.df["time"] < pd.Timestamp(self.data_start) + pd.DateOffset(years=1)]
+        The copies keep the calendar date and time (29 Feb falls back to 28 Feb).
+        Whole years are built and kept, so many plannings (start date sensitivity) reuse them."""
         y0 = self.data_start.year
         k_min = min(start.year - y0 - 1, 0)
         k_max = max(end.year - y0 + 1, 0)
+        cache = self.__dict__.setdefault("_cover_cache", {})
+        if (k_min, k_max) in cache:
+            return cache[(k_min, k_max)]
+        base = self.df[self.df["time"] < pd.Timestamp(self.data_start) + pd.DateOffset(years=1)]
         parts = []
         for k in range(k_min, k_max + 1):
             part = base.copy()
@@ -170,16 +174,17 @@ class TideCurve:
                     fill.append(day)
         if fill:
             df = pd.concat([df, *fill]).drop_duplicates("time").sort_values("time").reset_index(drop=True)
-        df = df[(df["time"] >= pd.Timestamp(start) - pd.Timedelta(days=2))
-                & (df["time"] <= pd.Timestamp(end) + pd.Timedelta(days=2))].reset_index(drop=True)
-        return TideCurve(df, self.data_start, self.data_end)
+        cache[(k_min, k_max)] = TideCurve(df, self.data_start, self.data_end)
+        return cache[(k_min, k_max)]
 
     def to_hours(self, ts: datetime) -> float:
         return (ts - self.t0) / timedelta(hours=1)
 
     def hour_of_day(self, hours):
+        """Hour of the day (0-24). Rounded to 1e-6 h so that a restriction boundary such as 13:30 is
+        exactly 13.5 (and not 13.4999999 because of floating point), whatever the reference time t0."""
         t0 = self.t0.hour + self.t0.minute / 60 + self.t0.second / 3600
-        return (t0 + np.asarray(hours, float)) % 24
+        return np.round(t0 + np.asarray(hours, float), 6) % 24
 
     def level_cm(self, hours):
         return np.interp(hours, self.hours, self.cm)
@@ -249,22 +254,36 @@ def _restricted(tide: TideCurve, hours, restrictions) -> np.ndarray:
     return out
 
 
+# candidate waits 0, 5 min, 10 min, ... up to MAX_WAIT_H. cumsum adds the step one by one, exactly as the
+# original loop (w += TIME_STEP_H) did, so the candidate moments are bit-for-bit the same.
+_WAITS = np.concatenate([[0.0], np.cumsum(np.full(int(MAX_WAIT_H / TIME_STEP_H) + 1, TIME_STEP_H))])
+_WAITS = _WAITS[_WAITS <= MAX_WAIT_H]
+_BLOCK = 288    # candidates checked at once (one day of 5-minute steps)
+
+
 def _wait_for_gate(tide: TideCurve, t: datetime, rule: GateRule, restrictions=()) -> float:
     """Smallest wait (h) from t until the gate is open (for the whole transit time, if any)
-    and, if restrictions are given, no time restriction applies during that period."""
+    and, if restrictions are given, no time restriction applies during that period.
+    The 5-minute candidates are checked a day at a time (vectorised) instead of one by one."""
     h0 = tide.to_hours(t)
     if rule.transit_h > 0:
         offs = np.linspace(0.0, rule.transit_h, max(int(math.ceil(rule.transit_h / TIME_STEP_H)) + 1, 2))
     else:
         offs = np.array([0.0])
-    w = 0.0
-    while w <= MAX_WAIT_H:
-        if h0 + w + offs[-1] > tide.hours[-1]:
-            raise _DataEnd()
-        hrs = h0 + w + offs
-        if tide.gate_open(hrs, rule).all() and not _restricted(tide, hrs, restrictions).any():
-            return w
-        w += TIME_STEP_H
+    last = tide.hours[-1]
+    for b in range(0, len(_WAITS), _BLOCK):
+        ws = _WAITS[b:b + _BLOCK]
+        beyond = h0 + ws + offs[-1] > last                  # past the end of the tidal data
+        hrs = h0 + ws[:, None] + offs[None, :]
+        ok = tide.gate_open(hrs, rule).all(axis=1)
+        if restrictions:
+            ok &= ~_restricted(tide, hrs, restrictions).any(axis=1)
+        hit = np.flatnonzero(beyond | ok)
+        if hit.size:
+            k = hit[0]
+            if beyond[k]:
+                raise _DataEnd()
+            return float(ws[k])
     raise PlanningError("No tidal window found within 14 days. Check the tide thresholds, "
                         "the time restrictions and the tidal data.")
 

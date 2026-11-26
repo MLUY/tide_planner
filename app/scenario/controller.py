@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -21,6 +22,8 @@ COLORS = {"Port": "#8c564b", "Sailing": "#1f77b4", "Installation": "#2ca02c", "T
 WAIT_CATEGORIES = ("Tidal wait", "Time restriction wait", "Weather downtime")
 RESTRICT_NO, RESTRICT_YES = "No", "Yes"
 # start date sensitivity: what is analysed per start date (label -> function of a planning result, in hours)
+SENS_HOURLY, SENS_DAILY = "Every hour (24 per day)", "Once a day (planned start time)"
+SENS_STEPS = {SENS_HOURLY: 1, SENS_DAILY: 24}      # hours between start moments
 SENS_METRICS = {
     "Tidal delay": lambda r: r.total_tidal_wait_h,
     "Tidal + time restriction delay": lambda r: r.total_tidal_wait_h + r.total_restriction_wait_h,
@@ -274,16 +277,20 @@ class Parametrization(vkt.Parametrization):
 
     added_features.sensitivity = vkt.Section("Start date sensitivity", initially_expanded=True)
     added_features.sensitivity.sens_text = vkt.Text(
-        "The start date is never known exactly and the tidal windows make the delay sensitive to it. "
-        "The planning is run for every start date within the variance (one run per day, same start time, "
-        "same planning basis) - see the view *Start date sensitivity* for the result per day, the histogram, "
-        "the average, P50 and P90.")
+        "The start moment is never known exactly and the tidal windows make the delay sensitive to it. "
+        "The planning is run for every start moment within the variance (every hour of every day, or once a "
+        "day at the planned start time), with the same inputs and planning basis. The view *Start date "
+        "sensitivity* shows the results as a distribution in buckets with the average, P50 and P90.")
     added_features.sensitivity.sens_days = vkt.NumberField("Start date variance (± days)", variant="slider",
                                                            min=0, max=30, step=1, default=7, num_decimals=0,
                                                            flex=100)
+    added_features.sensitivity.sens_step = vkt.OptionField("Start moments", options=list(SENS_STEPS),
+                                                           default=SENS_HOURLY, flex=50)
     added_features.sensitivity.sens_metric = vkt.OptionField("Result to analyse", options=list(SENS_METRICS),
-                                                             default="Tidal delay", flex=60)
-
+                                                             default="Tidal delay", flex=50)
+    added_features.sensitivity.sens_bucket = vkt.NumberField("Bucket size (0 = automatic)", default=0, min=0,
+                                                             flex=50, description="In hours; in days for the "
+                                                                                  "total project duration.")
 
 def _basis_text(res) -> str:
     return f"Gross planning ({res.weather.name})" if res.weather else "Nett planning"
@@ -539,74 +546,113 @@ def build_duration(d) -> go.Figure:
 
 
 def _sensitivity(params) -> dict:
-    """Run the planning for every start date in [start - N, start + N] days (same start time and basis)."""
+    """Run the planning for every start moment within ± N days (hourly or daily; same inputs and basis)."""
     n = int(round(float(params.sens_days or 0)))
     metric = params.sens_metric if params.sens_metric in SENS_METRICS else "Tidal delay"
+    hourly = params.sens_step != SENS_DAILY
     nett, gross, norm = _plans(params)                       # also validates the inputs
     weather = norm if (norm and params.planning_basis != BASIS_NETT) else None
+    planned = gross if weather else nett
     try:
         tide = load_tide(_tide_bytes(params))
     except PlanningError as exc:
         raise vkt.UserError(str(exc))
+    day0 = datetime.combine(params.start_date, datetime.min.time())
+    start_hour = float(params.start_hour or 0)
     runs = []
-    for shift in range(-n, n + 1):
-        res = (gross if weather else nett) if shift == 0 else _run_plan(params, weather=weather, tide=tide,
-                                                                         shift_days=shift)
-        runs.append(dict(shift=shift, start=res.start, finish=res.finish, value=SENS_METRICS[metric](res),
-                         tidal=res.total_tidal_wait_h, restriction=res.total_restriction_wait_h,
-                         weather=res.total_weather_h))
+    for d in range(-n, n + 1):
+        for h in (range(24) if hourly else [None]):
+            if h is None:                                     # once a day, at the planned start time
+                res = planned if d == 0 else _run_plan(params, weather=weather, tide=tide, shift_days=d)
+            else:                                             # every whole hour of the day
+                shift = d + (h - start_hour) / 24
+                res = _run_plan(params, weather=weather, tide=tide, shift_days=shift)
+            runs.append(dict(start=res.start, value=SENS_METRICS[metric](res), day=d,
+                             hour=res.start.hour + res.start.minute / 60))
     values = np.array([r["value"] for r in runs])
-    return dict(runs=runs, metric=metric, basis="gross" if weather else "nett", n=n,
-                mean=float(values.mean()), p50=float(np.percentile(values, 50)),
-                p90=float(np.percentile(values, 90)), min=float(values.min()), max=float(values.max()),
-                base=runs[n]["value"])
+    return dict(runs=runs, values=values, metric=metric, hourly=hourly, n=n, day0=day0,
+                basis="gross" if weather else "nett", planned=SENS_METRICS[metric](planned),
+                planned_start=planned.start, mean=float(values.mean()), p50=float(np.percentile(values, 50)),
+                p90=float(np.percentile(values, 90)), min=float(values.min()), max=float(values.max()))
 
 
-def build_sensitivity(sens) -> go.Figure:
-    runs, metric = sens["runs"], sens["metric"]
+def _nice_bucket(span: float) -> float:
+    """Automatic bucket size: about 12 buckets, rounded to 1 / 2 / 5 x 10^k."""
+    raw = max(span / 12, 1e-9)
+    mag = 10 ** math.floor(math.log10(raw))
+    return next(m * mag for m in (1, 2, 5, 10) if m * mag >= raw)
+
+
+def build_sensitivity(sens, bucket=0.0) -> go.Figure:
+    metric = sens["metric"]
     days = metric == "Total project duration"           # project duration in days, delays in hours
     unit = "days" if days else "h"
     conv = (lambda h: h / 24) if days else (lambda h: h)
-    vals = [conv(r["value"]) for r in runs]
-    mean, p50, p90 = conv(sens["mean"]), conv(sens["p50"]), conv(sens["p90"])
+    vals = conv(sens["values"])
+    n_runs = len(vals)
+    mean, p50, p90, planned = (conv(sens[k]) for k in ("mean", "p50", "p90", "planned"))
 
-    fig = make_subplots(rows=2, cols=1, row_heights=[0.5, 0.5], vertical_spacing=0.16,
-                        subplot_titles=(f"{metric} per start date ({unit})",
-                                        f"Distribution over {len(runs)} start dates"))
-    colors = ["#ff7f0e" if r["shift"] == 0 else "#1f77b4" for r in runs]
+    # buckets
+    size = float(bucket) if bucket and bucket > 0 else _nice_bucket(float(vals.max() - vals.min()))
+    lo = math.floor(vals.min() / size) * size
+    edges = np.arange(lo, vals.max() + size * 1.0001, size)
+    if len(edges) < 2:
+        edges = np.array([lo, lo + size])
+    counts, edges = np.histogram(vals, bins=edges)
+    pct = counts / n_runs * 100
+    centers = (edges[:-1] + edges[1:]) / 2
+    mode = int(np.argmax(counts))
+    labels = [f"{a:g}-{b:g}" for a, b in zip(edges[:-1], edges[1:])]
+    cum = np.cumsum(counts) / n_runs * 100
+
+    rows = 2 if sens["hourly"] else 1
+    fig = make_subplots(rows=rows, cols=1, row_heights=[0.62, 0.38] if rows == 2 else [1.0], vertical_spacing=0.14,
+                        specs=[[{"secondary_y": True}]] + ([[{}]] if rows == 2 else []),
+                        subplot_titles=("", "Per start date and start hour") if rows == 2 else None)
     fig.add_trace(go.Bar(
-        x=[f"{r['start']:%Y-%m-%d}" for r in runs], y=vals, marker_color=colors, name=metric,
-        showlegend=False,
-        customdata=[[f"{r['start']:%Y-%m-%d %H:%M}", f"{r['finish']:%Y-%m-%d %H:%M}", r["tidal"],
-                     r["restriction"], r["weather"], r["shift"]] for r in runs],
-        hovertemplate=("Start %{customdata[0]}<br>Finish %{customdata[1]}<br><b>%{y:.1f} " + unit + "</b><br>"
-                       "shift %{customdata[5]:+d} days<br>"
-                       "tidal %{customdata[2]:.1f} h, time restriction %{customdata[3]:.1f} h, "
-                       "weather %{customdata[4]:.1f} h<extra></extra>")), row=1, col=1)
-    lines = ((mean, "Average", "dot", "#2ca02c"), (p50, "P50", "dash", "#9467bd"), (p90, "P90", "solid", "#d62728"))
-    for val, label, dash, color in lines:
-        fig.add_hline(y=val, line=dict(color=color, dash=dash, width=1.5), row=1, col=1)
-
-    span = max(vals) - min(vals)
-    fig.add_trace(go.Histogram(x=vals, xbins=dict(size=max(span / 10, 0.5 if not days else 0.1)),
-                               marker_color="#1f77b4", opacity=0.8, name="start dates", showlegend=False,
-                               hovertemplate="%{x}: %{y} start date(s)<extra></extra>"), row=2, col=1)
-    for val, label, dash, color in lines:
-        fig.add_vline(x=val, line=dict(color=color, dash=dash, width=2), row=2, col=1)
-        # legend entry instead of a label on the line (labels overlap when the values are close)
+        x=centers.tolist(), y=pct.tolist(), width=size * 0.92, name="share of start moments",
+        marker_color=["#ff7f0e" if k == mode else "#1f77b4" for k in range(len(counts))],
+        text=[f"{c}" if c else "" for c in counts], textposition="outside", textfont=dict(size=10),
+        customdata=[[lab, int(c)] for lab, c in zip(labels, counts)],
+        hovertemplate="%{customdata[0]} " + unit + "<br>%{customdata[1]} start moments (%{y:.1f} %)<extra></extra>",
+        showlegend=False), row=1, col=1, secondary_y=False)
+    fig.add_trace(go.Scatter(x=edges[1:].tolist(), y=cum.tolist(), mode="lines+markers", name="cumulative %",
+                             line=dict(color="#7f7f7f", width=1.5), marker=dict(size=4),
+                             hovertemplate="≤ %{x:g} " + unit + ": %{y:.0f} %<extra></extra>"),
+                  row=1, col=1, secondary_y=True)
+    for val, label, dash, color in ((mean, "Average", "dot", "#2ca02c"), (p50, "P50", "dash", "#9467bd"),
+                                    (p90, "P90", "solid", "#d62728"), (planned, "Planned start", "dashdot", "#000000")):
+        fig.add_vline(x=val, line=dict(color=color, dash=dash, width=2), row=1, col=1)
         fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines", name=f"{label} {val:.1f} {unit}",
-                                 line=dict(color=color, dash=dash, width=2), showlegend=True), row=2, col=1)
-    fig.update_xaxes(title_text="Start date (planned start in orange)", type="date", tickformat="%d %b",
+                                 line=dict(color=color, dash=dash, width=2)), row=1, col=1)
+    fig.update_xaxes(title_text=f"{metric} ({unit}) - bucket {size:g} {unit} - {n_runs} start moments",
                      row=1, col=1)
-    fig.update_yaxes(title_text=unit, rangemode="tozero", row=1, col=1)
-    fig.update_xaxes(title_text=f"{metric} ({unit})", row=2, col=1)
-    fig.update_yaxes(title_text="Number of start dates", dtick=1, rangemode="tozero", row=2, col=1)
+    fig.update_yaxes(title_text="% of start moments", rangemode="tozero", row=1, col=1, secondary_y=False)
+    fig.update_yaxes(title_text="cumulative %", range=[0, 105], tickvals=[0, 25, 50, 75, 100], showgrid=False,
+                     row=1, col=1, secondary_y=True)
+
+    if rows == 2:          # compact overview: value per start date (rows) and start hour (columns)
+        dates = sorted({r["day"] for r in sens["runs"]})
+        grid = np.full((len(dates), 24), np.nan)
+        for r in sens["runs"]:
+            grid[dates.index(r["day"]), int(round(r["hour"])) % 24] = conv(r["value"])
+        ylab = [f"{sens['day0'] + timedelta(days=d):%d %b}" for d in dates]
+        grid_list = [[None if np.isnan(v) else float(v) for v in row] for row in grid]
+        fig.add_trace(go.Heatmap(z=grid_list, x=list(range(24)), y=ylab, colorscale="YlOrRd", showscale=True,
+                                 colorbar=dict(title=unit, len=0.36, y=0.17, thickness=12),
+                                 hovertemplate="%{y} %{x}:00 -> %{z:.1f} " + unit + "<extra></extra>"),
+                      row=2, col=1)
+        fig.update_xaxes(title_text="Start hour", dtick=2, row=2, col=1)
+        fig.update_yaxes(autorange="reversed", tickfont=dict(size=9), row=2, col=1)
+
+    step = "every hour" if sens["hourly"] else "once a day"
     fig.update_layout(
-        height=740, bargap=0.15, margin=dict(t=90, b=80, l=60, r=20),
-        legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.1, yanchor="top", font=dict(size=12)),
-        title=(f"Start date sensitivity - {metric.lower()}, {sens['basis']} planning, start ± {sens['n']} days<br>"
-               f"<sup>average {mean:.1f} | P50 {p50:.1f} | P90 {p90:.1f} | min {conv(sens['min']):.1f} | "
-               f"max {conv(sens['max']):.1f} {unit} - planned start (orange) {conv(sens['base']):.1f} {unit}</sup>"))
+        height=800 if rows == 2 else 540, bargap=0, margin=dict(t=115, b=40, l=60, r=20),
+        legend=dict(orientation="h", x=0.5, xanchor="center", y=1.01, yanchor="bottom", font=dict(size=11)),
+        title=(f"Start date sensitivity - {metric.lower()}, {sens['basis']} planning, start ± {sens['n']} days "
+               f"({step})<br><sup>most common {labels[mode]} {unit} ({pct[mode]:.0f} %) | average {mean:.1f} | "
+               f"P50 {p50:.1f} | P90 {p90:.1f} | min {conv(sens['min']):.1f} | max {conv(sens['max']):.1f} {unit}"
+               f"</sup>"))
     return fig
 
 
@@ -661,10 +707,11 @@ class Scenario(vkt.Controller):
         params = _flat(params)
         return _result(build_delay_curve(_view_plan(params)), params)
 
-    @vkt.PlotlyView("Start date sensitivity", duration_guess=2)
+    # a simulation of hundreds of plannings: runs when the button is clicked (duration_guess > 3 s)
+    @vkt.PlotlyView("Start date sensitivity", duration_guess=10, update_label="Run simulation")
     def sensitivity_view(self, params, **kwargs):
         params = _flat(params)
-        return _result(build_sensitivity(_sensitivity(params)), params)
+        return _result(build_sensitivity(_sensitivity(params), float(params.sens_bucket or 0)), params)
 
     @vkt.PlotlyView("Project duration", duration_guess=2)
     def duration_view(self, params, **kwargs):

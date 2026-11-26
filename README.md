@@ -81,3 +81,9 @@ the planning is run for every start date within ± N days (slider 0-30, one run 
 and planning basis). Result to analyse: tidal delay (default), tidal + time restriction delay, total delay
 incl. weather, or total project duration. The view shows the result per start date (planned start in
 orange) and a histogram with the average, P50 and P90 (P90 = exceeded by 10 % of the start dates).
+
+Start moments: every hour of every day (default; e.g. ± 7 days = 360 plannings) or once a day at the planned
+start time. The view shows the share of start moments per bucket (most common bucket in orange; bucket size
+automatic or set), the cumulative %, average, P50, P90 and the planned start, and for the hourly run a map
+per start date and start hour. Because it runs hundreds of plannings, the view runs with the button
+*Run simulation*.
