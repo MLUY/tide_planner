@@ -161,6 +161,10 @@ class Parametrization(vkt.Parametrization):
     # ---------------- tab 1: planning, cycle, vessel, channel, tide ----------------
     input = vkt.Tab("Input")
     input.title = vkt.Text("##  Tidal planner")
+    # 'Refresh views' raises this hidden counter: VIKTOR redraws all views when an input changes
+    input.refresh_counter = vkt.HiddenField("Refresh counter")
+    input.refresh_views = vkt.SetParamsButton("Refresh views", method="refresh_views", longpoll=False, flex=40,
+                                              description="Recalculate the planning and redraw all views.")
     input.download_excel = vkt.DownloadButton("Download planning (Excel)", method="download_excel",
                                               description="All activities (from - to, type of delay), cycles, "
                                                           "departures/entries and tidal data in one Excel file.")
@@ -209,6 +213,9 @@ class Parametrization(vkt.Parametrization):
 
     # ---------------- tab 2: time restrictions, weather downtime, project duration ----------------
     added_features = vkt.Tab("Added features")
+    added_features.refresh_views_2 = vkt.SetParamsButton("Refresh views", method="refresh_views", longpoll=False,
+                                                         flex=40, description="Recalculate the planning and redraw "
+                                                                              "all views.")
 
     added_features.restrictions = vkt.Section("Time restrictions - sailing in/out of port", initially_expanded=True)
     added_features.restrictions.use_time_restrictions = vkt.OptionField(
@@ -679,6 +686,11 @@ def _export_inputs(params) -> dict:
 class Scenario(vkt.Controller):
     label = "Scenario"
     parametrization = Parametrization
+
+    def refresh_views(self, params, **kwargs):
+        """Raise the hidden counter: an input change makes VIKTOR recalculate and redraw every view."""
+        count = int((params.input or {}).get("refresh_counter") or 0) + 1
+        return vkt.SetParamsResult({"input": {"refresh_counter": count}})
 
     def download_excel(self, params, **kwargs):
         params = _flat(params)
