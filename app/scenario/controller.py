@@ -103,7 +103,9 @@ def _plans(params):
     if key not in _PLAN_CACHE:
         if len(_PLAN_CACHE) > 20:
             _PLAN_CACHE.clear()
-        norm = _selected_norm(params)
+        # weather downtime only counts in the gross planning: with 'Nett' selected it is 0 everywhere
+        # (views, project duration, Excel, sensitivity), also when monthly downtime is switched on
+        norm = _selected_norm(params) if params.planning_basis != BASIS_NETT else None
         try:
             tide = load_tide(data)              # read the file once for both plannings
         except PlanningError as exc:
@@ -526,7 +528,8 @@ def build_duration(d) -> go.Figure:
                                 align="left", height=24, fill_color=[fill, fill, fill]))
     if not d.norm:
         fig = go.Figure(table)
-        fig.update_layout(title="Total project duration - no weather downtime applied (gross = nett)", height=420,
+        fig.update_layout(title="Total project duration - no weather downtime (nett planning or weather downtime "
+                                "switched off): gross = nett", height=420,
                           margin=dict(t=60, b=20, l=60, r=20))
         return fig
     # table on top (fixed height so all rows are visible), compact bar chart below
