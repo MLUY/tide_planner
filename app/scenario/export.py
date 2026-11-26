@@ -7,7 +7,7 @@ Sheets
   Cycles            one row per cycle (same as the Cycle table view)
   Departures-Entries every port gate with tide level and the waits split by cause
   Tide data         tidal data over the planning period with window / restriction status
-  Weather downtime  (only when monthly workability is applied) nett / gross per calendar month
+  Weather downtime  weather downtime per calendar month
 """
 from __future__ import annotations
 
@@ -92,7 +92,7 @@ def _summary(ws, res: PlanResult, inputs: dict, dur=None) -> None:
             ws.cell(row=row, column=3, value=unit)
         row += 1
 
-    section("Results - " + ("gross planning (incl. weather)" if res.weather else "nett planning (excl. weather)"))
+    section("Results - planning (incl. weather)" if res.weather else "Results - planning")
     avg = sum(c["hours"] for c in res.cycle_stats) / len(res.cycle_stats)
     line("Start", res.start, DT)
     line("Finish", res.finish, DT)
@@ -107,38 +107,18 @@ def _summary(ws, res: PlanResult, inputs: dict, dur=None) -> None:
     row += 1
 
     if dur is not None:
-        section("Total project duration")
-        n, g = dur.nett_plan, dur.gross_plan
-        for col, title in ((2, "Nett planning"), (3, "Gross planning")):
-            c = ws.cell(row=row, column=col, value=title)
-            c.font, c.fill = HEADER_FONT, HEADER_FILL
-        row += 1
-
-        def line2(label, nett, gross, fmt=None, unit="", bold=False):
-            nonlocal row
-            ws.cell(row=row, column=1, value=label).font = Font(bold=bold)
-            for col, v in ((2, nett), (3, gross)):
-                c = ws.cell(row=row, column=col, value=v)
-                c.font = Font(bold=bold)
-                c.alignment = Alignment(horizontal="left")
-                if fmt:
-                    c.number_format = fmt
-            if unit:
-                ws.cell(row=row, column=4, value=unit)
-            row += 1
-
-        line2("Number of cycles", dur.n_cycles, dur.n_cycles)
-        line2("Nominal cycle (no delays)", _h(dur.nominal_cycle_h), _h(dur.nominal_cycle_h), "0.0", "h")
-        line2("Tidal delay (total)", _h(n.total_tidal_wait_h), _h(g.total_tidal_wait_h), "0.0", "h")
-        line2("Time restriction delay (total)", _h(n.total_restriction_wait_h), _h(g.total_restriction_wait_h),
-              "0.0", "h")
-        line2("Weather downtime (total)", _h(n.total_weather_h), _h(g.total_weather_h), "0.0", "h")
-        line2("Total delay", _h(n.total_wait_h), _h(g.total_wait_h), "0.0", "h", bold=True)
-        line2("Cycle (nominal + total delay / cycles)", _h(dur.nett_cycle_h), _h(dur.gross_cycle_h), "0.0", "h")
-        line2("Total duration", _h(dur.nett_total_h), _h(dur.gross_total_h), "0.0", "h", bold=True)
-        line2("Total duration", round(dur.nett_total_h / 24, 2), round(dur.gross_total_h / 24, 2), "0.0", "days",
-              bold=True)
-        line2("Finish", dur.nett_finish, dur.gross_finish, DT)
+        section("Total project duration (incl. weather)")
+        g = dur.gross_plan
+        line("Number of cycles", dur.n_cycles)
+        line("Nominal cycle (no delays)", _h(dur.nominal_cycle_h), "0.0", "h")
+        line("Tidal delay (total)", _h(g.total_tidal_wait_h), "0.0", "h")
+        line("Time restriction delay (total)", _h(g.total_restriction_wait_h), "0.0", "h")
+        line("Weather downtime (total)", _h(g.total_weather_h), "0.0", "h")
+        line("Total delay", _h(g.total_wait_h), "0.0", "h")
+        line("Cycle (nominal + total delay / cycles)", _h(dur.gross_cycle_h), "0.0", "h")
+        line("Total duration", _h(dur.gross_total_h), "0.0", "h")
+        line("Total duration", round(dur.gross_total_h / 24, 2), "0.0", "days")
+        line("Finish", dur.gross_finish, DT)
         if dur.norm:
             ws.cell(row=row, column=1, value="Workability per month (%)")
             row += 1
@@ -330,8 +310,8 @@ def build_simulation_excel(sim, inputs: dict | None = None, cycle_rows=None, not
         for col, v in enumerate([r.phase, r.type, h, m, p, round(h * (1 - m / 100), 2), round(h * (1 + p / 100), 2)], 1):
             ws.cell(row=row, column=col, value=v)
     row += 2
-    names = {"nett": "Nett (excl. weather)", "gross": "Gross (incl. weather)"}
-    cols = ["nett", "gross"] if sim.basis == "gross" else ["nett"]
+    names = {"nett": "Planning", "gross": "Planning (incl. weather)"}
+    cols = [sim.basis]
     for c in cols:
         ws.cell(row=row, column=1, value=names[c]).font = SECTION_FONT
         row += 1

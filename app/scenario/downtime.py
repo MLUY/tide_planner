@@ -103,7 +103,7 @@ def project_duration(nett, gross=None, norm: Norm | None = None) -> DurationResu
         n_cycles=nett.cycles, nominal_cycle_h=nett.nominal_cycle_h,
         nett_cycle_h=total(nett) / nett.cycles, nett_total_h=total(nett),
         gross_cycle_h=total(gross) / gross.cycles, gross_total_h=total(gross),
-        downtime_h=gross.total_weather_h if gross is not nett else 0.0,
+        downtime_h=gross.total_weather_h,
         start=nett.start, nett_finish=nett.finish, gross_finish=gross.finish,
-        norm=norm if gross is not nett else None, months=[months[k] for k in sorted(months)],
+        norm=norm if gross.weather is not None else None, months=[months[k] for k in sorted(months)],
         nett_plan=nett, gross_plan=gross)

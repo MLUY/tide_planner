@@ -55,7 +55,7 @@ from / until, hours of the day). With **No** (default) the table is hidden and i
 - **Input**: vessel (loaded draft for departure, empty draft for entry), planning, (nett) cycle with
   - % / + % variance per phase, tidal entrance channel, tide, and at the bottom the **simulation**
   (number of runs, default 300, button *Simulate*).
-- **Weather**: monthly workability (SME); *Yes* = gross planning (incl. weather), *No* = nett planning.
+- **Weather**: monthly workability (SME). Weather downtime is always part of the planning.
 - **Time constraints**: daily periods without sailing in/out of port.
 - **Download**: Excel of the most likely planning, and the simulation workbook.
 
@@ -64,8 +64,8 @@ from / until, hours of the day). With **No** (default) the table is hidden and i
 - **Cycle**: tide and cycles of the P50 run, with the required tide for departure (loaded) and entry (empty).
 - **Table**: cycle table of the P50 run.
 - **Simulation**: P10 / P50 / P90 / average of tidal, time restriction, weather and total delay, tidal delay
-  as % of the duration excl. weather (nett and gross are similar), project duration and finish.
-- **Durations**: project duration of the most likely nett and gross runs side by side.
+  as % of the duration excl. weather, project duration and finish.
+- **Durations**: project duration of the most likely run, with the delays per month stacked by cause.
 
 ## Loaded / empty draft
 Departure uses the loaded draft, entry the empty draft: required tide = draft + keel clearance - channel
@@ -76,46 +76,21 @@ Optional (*Apply monthly downtime percentages?* = Yes). Section *Monthly workabi
 MWS window, yearly value and one table with two columns (month | workability %). Default:
 BL2 MP Installation Worst (10 hr): 57.8 65.5 76.6 81.9 88.7 91.7 84.7 80.6 79.2 69.9 66.7 57.8 (year 74.3).
 
-## Nett / gross planning
-Follows the weather choice *Apply monthly downtime percentages?*:
-- **No** = **nett planning**: cycles with tidal and time restriction waits, no weather downtime.
-- **Yes** = **gross planning**: in every cycle the vessel waits on weather at site (after *Sail to site*) for
-  (working hours of the cycle) x (100 / workability of that month - 1); the tidal windows are then
-  planned on this later timeline (weather downtime shown in teal).
-All views, the project duration, the Excel export and the start date sensitivity follow this choice.
-The Gantt title shows: planning, vessel, cycles, nominal cycle / start and end / total delay split into
-tidal, weather and time restriction (whole hours).
+## Weather downtime in the planning
+Weather downtime is always included: in every cycle the vessel waits on weather at site (after *Sail to site*)
+for (working hours of the cycle) x (100 / workability of that month - 1); the tidal windows are then planned on
+this later timeline. There is no separate nett planning (excl. weather) in the analysis anymore.
 
-## Total project duration
-Section in tab *Added features*, view **Project duration** and Excel (Summary + sheet *Weather downtime*),
-nett and gross planning side by side: number of cycles, nominal cycle, tidal / time restriction /
-weather delays and their total, cycle (nominal + total delay / cycles), total duration (cycles x cycle),
-start and finish.
+## Simulation (Monte Carlo)
+Because the cycles repeat with identical durations, a small shift can make the whole planning keep hitting
+or keep missing the tidal windows ('lucky' / 'unlucky'). Therefore every result comes from a simulation:
+- Cycle table (tab *Input*): per phase a **- %** and **+ %** variance (defaults: loading and sailing -10/+20 %,
+  installation -10/+25 %). Without any variance all runs are identical and a red warning is shown.
+- Every run draws a duration for every phase of every cycle (triangular: nominal - x % ... nominal + y %,
+  most likely nominal) and plans the installation incl. weather downtime. Number of runs at the bottom of
+  the tab *Input* (default 300), button *Simulate*.
+- The **most likely planning** is the run closest to the median in both project duration and tidal delay.
+- Tab *Download*: Excel of the most likely planning, and the simulation workbook (settings, P10/P50/P90
+  statistics, every run, the most likely planning).
 
-## Start date sensitivity
-Section *Start date sensitivity* (tab *Added features*) and view **Start date sensitivity**:
-the planning is run for every start date within ± N days (slider 0-30, one run per day, same start time
-and planning basis). Result to analyse: tidal delay (default), tidal + time restriction delay, total delay
-incl. weather, or total project duration. The view shows the result per start date (planned start in
-orange) and a histogram with the average, P50 and P90 (P90 = exceeded by 10 % of the start dates).
-
-Start moments: every hour of every day (default; e.g. ± 7 days = 360 plannings) or once a day at the planned
-start time. The view shows the share of start moments per bucket (most common bucket in orange; bucket size
-automatic or set), the cumulative %, average, P50, P90 and the planned start, and for the hourly run a map
-per start date and start hour. Because it runs hundreds of plannings, the view runs with the button
-*Run simulation*.
-
-## Duration variance simulation (Monte Carlo)
-Cycle table (tab *Input*): per phase a **- %** and **+ %** variance (defaults: loading, sailing -10/+20 %,
-installation -10/+25 %). Tab *Variance*: number of runs (default 300), random seed, and optionally a random
-start moment within the ± days.
-
-Every run draws a duration for every phase of every cycle (triangular: nominal - x % ... nominal + y %,
-most likely nominal) and plans the nett and - with weather downtime - the gross planning with the same
-draws. Views (button *Run simulation*):
-- **Simulation - P50 planning**: the run whose project duration is the median, as a Gantt, with the
-  P10 / P50 / P90 finish dates.
-- **Simulation - results**: P10 / P50 / P90 / average of tidal, time restriction, weather and total delay,
-  project duration and finish date for nett and gross, plus the distribution of the project duration.
-Tab *Download*: **Download simulation (Excel)** with the settings, statistics, every run and the P50
-planning. The normal planning views keep using the nominal durations.
+Test inputs to check the results: `sample_data/input`.

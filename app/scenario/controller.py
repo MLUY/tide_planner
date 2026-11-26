@@ -27,7 +27,6 @@ DEFAULT_VARIANCE = {"Loading": (10, 20), "Sail to site": (10, 20), "Installation
                     "Sail to loading port": (10, 20)}
 DEFAULT_CYCLE_ROWS = [dict(d, var_minus=DEFAULT_VARIANCE.get(d["phase"], (10, 20))[0],
                            var_plus=DEFAULT_VARIANCE.get(d["phase"], (10, 20))[1]) for d in DEFAULT_CYCLE]
-BASIS_GROSS, BASIS_NETT = "Gross (incl. weather downtime)", "Nett (excl. weather downtime)"
 DEFAULT_TIDE = Path(__file__).resolve().parents[2] / "sample_data" / "gunsan_tide_2026_hourly.csv"
 TABS = ("input", "weather", "constraints", "download")
 SECTIONS = ("downtime", "workability", "refresh")       # collapsible sections in the tab 'Weather'
@@ -104,7 +103,6 @@ def _run_plan(params, weather=None, tide=None, shift_days=0):
 
 
 _RESTRICT_ON = vkt.IsEqual(vkt.Lookup("constraints.use_time_restrictions"), RESTRICT_YES)
-_DOWNTIME_ON = vkt.IsEqual(vkt.Lookup("weather.downtime.use_downtime"), RESTRICT_YES)
 _PLAN_CACHE: dict = {}
 
 
@@ -112,13 +110,12 @@ def _log(what: str, params, extra: str = "") -> None:
     """Diagnostic line in the viktor-cli terminal: shows that VIKTOR asked for a calculation and with
     which choices (to find out why views do not update after a change). Temporary."""
     print(f"[tide planner] {datetime.now():%H:%M:%S} {what:24s} | time restrictions = "
-          f"{params.get('use_time_restrictions')!r} | monthly downtime = {params.get('use_downtime')!r} | "
+          f"{params.get('use_time_restrictions')!r} | "
           f"start = {params.get('start_date')} {params.get('start_hour')} h {extra}", flush=True)
 
 
 def _plans(params):
-    """(nett planning, gross planning, norm) for flat params; gross = nett without weather downtime.
-    Cached, because the output fields and views all need the same plannings."""
+    """(planning incl. weather downtime, norm) for flat params. Cached: the views need the same planning."""
     # the uploaded tide file is identified by its content (its object text is not unique)
     data = _tide_bytes(params)
     key = json.dumps({**{k: v for k, v in params.items() if k != "tide_file"},
@@ -127,23 +124,17 @@ def _plans(params):
         _log("new planning calculated", params)
         if len(_PLAN_CACHE) > 20:
             _PLAN_CACHE.clear()
-        # nett or gross follows the weather choice: monthly downtime 'Yes' = gross planning (incl. weather),
-        # 'No' = nett planning (weather 0 everywhere, gross = nett)
-        norm = _selected_norm(params)
+        norm = _selected_norm(params)           # weather downtime is always part of the planning
         try:
-            tide = load_tide(data)              # read the file once for both plannings
+            tide = load_tide(data)
         except PlanningError as exc:
             raise vkt.UserError(str(exc))
-        nett = _run_plan(params, tide=tide)
-        gross = _run_plan(params, weather=norm, tide=tide) if norm else nett
-        _PLAN_CACHE[key] = (nett, gross, norm)
+        _PLAN_CACHE[key] = (_run_plan(params, weather=norm, tide=tide), norm)
     return _PLAN_CACHE[key]
 
 
 def _selected_norm(params):
-    """The workability norm from the two-column month table, or None when weather downtime is off."""
-    if params.use_downtime != RESTRICT_YES:
-        return None
+    """The workability norm from the two-column month table (weather downtime is always applied)."""
     rows = list(params.downtime_months or [])
     if len(rows) != 12:
         raise vkt.UserError(f"The monthly workability table needs 12 rows (Jan-Dec); it has {len(rows)}.")
@@ -230,20 +221,15 @@ class Parametrization(vkt.Parametrization):
     # ---------------- tab: weather (collapsible sections, so every field is inside a section) ----------------
     weather = vkt.Tab("Weather")
     weather.downtime = vkt.Section("Weather downtime (SME)", initially_expanded=True)
-    weather.downtime.use_downtime = vkt.OptionField(
-        "Apply monthly downtime percentages?", options=[RESTRICT_NO, RESTRICT_YES], default=RESTRICT_NO,
-        description="Yes = gross planning (incl. weather downtime); No = nett planning (no weather downtime).")
-    weather.downtime.basis_note = vkt.Text("**No** = nett planning, **Yes** = gross planning "
-                                           "(including weather downtime) in all views and the Excel export.")
     weather.downtime.downtime_text = vkt.Text(
-        "Workability per month from the Site Metocean Report (SME): the percentage of time in which the "
-        "operation can be performed within the MWS weather window. In the gross planning, the vessel waits "
-        "on weather at site in every cycle for (working hours of the cycle) x (100 / workability of that "
-        "month - 1). The table is in the section *Monthly workability* below (collapsible).",
-        visible=_DOWNTIME_ON)
+        "Weather downtime is always part of the planning. Workability per month from the Site Metocean Report "
+        "(SME): the percentage of time in which the operation can be performed within the MWS weather window. "
+        "In every cycle the vessel waits on weather at site for (working hours of the cycle) x (100 / "
+        "workability of that month - 1). The table is in the section *Monthly workability* below "
+        "(collapsible).")
 
-    # separate section, so the table can be collapsed while the selection above stays visible
-    weather.workability = vkt.Section("Monthly workability", initially_expanded=True, visible=_DOWNTIME_ON)
+    # separate section, so the table can be collapsed
+    weather.workability = vkt.Section("Monthly workability", initially_expanded=True)
     weather.workability.downtime_name = vkt.TextField("Norm", default=DEFAULT_NORM[0], flex=100)
     weather.workability.downtime_mws_h = vkt.NumberField("MWS window", suffix="hr", default=DEFAULT_NORM[1],
                                                          min=0, flex=50)
@@ -285,9 +271,9 @@ class Parametrization(vkt.Parametrization):
 
     # ---------------- tab: download ----------------
     download = vkt.Tab("Download")
-    download.download_text = vkt.Text("### Download\nThe planning shown in the views (nett, or gross when weather "
-                                      "downtime is applied) with all activities, cycles, departures/entries, "
-                                      "tidal data and the project duration in one Excel file.")
+    download.download_text = vkt.Text("### Download\nThe most likely planning shown in the views (incl. weather "
+                                      "downtime) with all activities, cycles, departures/entries, tidal data and the "
+                                      "project duration in one Excel file.")
     download.download_excel = vkt.DownloadButton("Download planning (Excel)", method="download_excel",
                                                  description="All activities (from - to, type of delay), cycles, "
                                                              "departures/entries and tidal data in one Excel file.")
@@ -300,7 +286,7 @@ class Parametrization(vkt.Parametrization):
 
 
 def _basis_text(res) -> str:
-    return "Gross planning (incl. weather)" if res.weather else "Nett planning (excl. weather)"
+    return "Planning (incl. weather)" if res.weather else "Planning"
 
 
 def _delay_text(res) -> str:
@@ -499,8 +485,8 @@ def build_cycle_table(res) -> go.Figure:
 
 
 def _duration_rows(d) -> list[tuple]:
-    """(label, nett planning, gross planning) - in the order nominal -> delays -> cycle -> total."""
-    n, g = d.nett_plan, d.gross_plan
+    """(label, value) of the planning incl. weather - in the order nominal -> delays -> cycle -> total."""
+    g = d.gross_plan
 
     def h(x):
         return f"{x:,.1f} h"
@@ -508,32 +494,31 @@ def _duration_rows(d) -> list[tuple]:
     def hd(x):
         return f"{x:,.1f} h ({x / 24:,.1f} d)"
     return [
-        ("Number of cycles", f"{d.n_cycles}", f"{d.n_cycles}"),
-        ("Nominal cycle (no delays)", h(d.nominal_cycle_h), h(d.nominal_cycle_h)),
-        ("Tidal delay (total)", hd(n.total_tidal_wait_h), hd(g.total_tidal_wait_h)),
-        ("Time restriction delay (total)", hd(n.total_restriction_wait_h), hd(g.total_restriction_wait_h)),
-        ("Weather downtime (total)", hd(n.total_weather_h), hd(g.total_weather_h)),
-        ("<b>Total delay</b>", f"<b>{hd(n.total_wait_h)}</b>", f"<b>{hd(g.total_wait_h)}</b>"),
-        ("Cycle (nominal + total delay / cycles)", h(d.nett_cycle_h), h(d.gross_cycle_h)),
+        ("Number of cycles", f"{d.n_cycles}"),
+        ("Nominal cycle (no delays)", h(d.nominal_cycle_h)),
+        ("Tidal delay (total)", hd(g.total_tidal_wait_h)),
+        ("Time restriction delay (total)", hd(g.total_restriction_wait_h)),
+        ("Weather downtime (total)", hd(g.total_weather_h)),
+        ("<b>Total delay</b>", f"<b>{hd(g.total_wait_h)}</b>"),
+        ("Cycle (nominal + total delay / cycles)", h(d.gross_cycle_h)),
         ("<b>Total duration</b> (cycles x cycle)",
-         f"<b>{d.n_cycles} x {d.nett_cycle_h:.1f} h = {d.nett_total_h / 24:,.1f} d</b>",
          f"<b>{d.n_cycles} x {d.gross_cycle_h:.1f} h = {d.gross_total_h / 24:,.1f} d</b>"),
-        ("Start", f"{d.start:%Y-%m-%d %H:%M}", f"{d.start:%Y-%m-%d %H:%M}"),
-        ("Finish", f"{d.nett_finish:%Y-%m-%d %H:%M}", f"{d.gross_finish:%Y-%m-%d %H:%M}"),
+        ("Start", f"{d.start:%Y-%m-%d %H:%M}"),
+        ("Finish", f"{d.gross_finish:%Y-%m-%d %H:%M}"),
     ]
 
 
 def build_duration(d) -> go.Figure:
     rows = _duration_rows(d)
     fill = ["#EEF3F9" if i % 2 else "white" for i in range(len(rows))]
-    table = go.Table(columnwidth=[3, 3, 3],
-                     header=dict(values=["<b>Project duration</b>", "<b>Nett planning</b>", "<b>Gross planning</b>"],
+    table = go.Table(columnwidth=[3, 4],
+                     header=dict(values=["<b>Project duration</b>", "<b>Planning (incl. weather)</b>"],
                                  align="left", fill_color="#C8D4E3", height=28),
-                     cells=dict(values=[[r[0] for r in rows], [r[1] for r in rows], [r[2] for r in rows]],
-                                align="left", height=24, fill_color=[fill, fill, fill]))
-    # delays per month of the planning shown (gross with weather downtime, otherwise nett), stacked by cause;
-    # every wait is counted in the month in which it starts, so the bars add up to 'Total delay' in the table
-    plan = d.gross_plan if d.norm else d.nett_plan
+                     cells=dict(values=[[r[0] for r in rows], [r[1] for r in rows]],
+                                align="left", height=24, fill_color=[fill, fill]))
+    # delays per month, stacked by cause; every wait is counted in the month in which it starts,
+    # so the bars add up to 'Total delay' in the table
+    plan = d.gross_plan
     causes = [("Tidal wait", "Tidal"), ("Weather downtime", "Weather"), ("Time restriction wait", "Time restriction")]
     months = {}
     for seg in plan.segments:
@@ -543,7 +528,7 @@ def build_duration(d) -> go.Figure:
     keys = sorted(months)
     pct = {m["month"]: m["pct"] for m in d.months}
     labels = [f"<b>{k:%b %Y}</b>" + (f"<br>workability {pct[k]:.1f} %" if k in pct else "") for k in keys]
-    basis = "gross planning (incl. weather)" if d.norm else "nett planning (excl. weather)"
+    basis = "planning (incl. weather)"
 
     fig = make_subplots(rows=2, cols=1, row_heights=[0.60, 0.40], vertical_spacing=0.09,
                         specs=[[{"type": "table"}], [{"type": "xy"}]])
@@ -570,9 +555,7 @@ def build_duration(d) -> go.Figure:
                              f"<span style='font-size:11px'>Tidal, weather and time restriction waiting in days, "
                              f"counted in the month the wait starts. All bars together = Total delay in the table "
                              f"({sum(totals):.1f} days).</span>"))
-    title = (f"Total project duration - nett {d.nett_total_h / 24:.1f} days, gross {d.gross_total_h / 24:.1f} days "
-             f"(incl. weather)" if d.norm else
-             "Total project duration - no weather downtime (weather downtime switched off): gross = nett")
+    title = f"Total project duration {d.gross_total_h / 24:.1f} days (incl. weather)"
     fig.update_layout(height=700, margin=dict(t=75, b=15, l=60, r=20), barmode="stack", bargap=0.25,
                       uniformtext=dict(minsize=10, mode="hide"),        # no unreadable numbers in thin segments
                       legend=dict(orientation="h", x=1, xanchor="right", y=0.38, yanchor="bottom",
@@ -589,15 +572,15 @@ def _simulation(params):
     key = _inputs_revision(params)
     if key in _SIM_CACHE:
         return _SIM_CACHE[key]
-    nett, gross, norm = _plans(params)                       # validates the inputs
+    plan, norm = _plans(params)                              # validates the inputs
     rows = _cycle_rows(params)
     phases = _phases(params)
     minus = [float(r.var_minus or 0) for r in rows]
     plus = [float(r.var_plus or 0) for r in rows]
     try:
-        sim = simulate(start=nett.start, phases=phases, minus_pct=minus, plus_pct=plus, tide=nett.tide,
-                       rule=nett.rule, entry_rule=nett.entry_rule, n_cycles=nett.cycles,
-                       restrictions=nett.restrictions, weather=norm, n_runs=int(params.sim_runs or 300), seed=1)
+        sim = simulate(start=plan.start, phases=phases, minus_pct=minus, plus_pct=plus, tide=plan.tide,
+                       rule=plan.rule, entry_rule=plan.entry_rule, n_cycles=plan.cycles,
+                       restrictions=plan.restrictions, weather=norm, n_runs=int(params.sim_runs or 300), seed=1)
     except PlanningError as exc:
         raise vkt.UserError(str(exc))
     if len(_SIM_CACHE) > 5:
@@ -620,11 +603,9 @@ def _sim_note(sim, params) -> str:
 
 
 def _sim_duration(params, sim=None):
-    """Project duration (nett vs gross) of the most likely (P50) runs of the simulation."""
+    """Project duration of the most likely (P50) run of the simulation (incl. weather)."""
     sim = sim or _simulation(params)
-    nett, gross = sim.p50_plans["nett"], sim.p50_plans["gross"]
-    return project_duration(nett, gross if sim.basis == "gross" else None,
-                            _plans(params)[2] if sim.basis == "gross" else None)
+    return project_duration(sim.p50_plan, sim.p50_plan, _plans(params)[1])
 
 
 def build_sim_gantt(sim, params) -> go.Figure:
@@ -650,16 +631,9 @@ def build_sim_gantt(sim, params) -> go.Figure:
     return fig
 
 
-def _tidal_check(sim) -> str:
-    """Tidal delay share of the project duration (P50), nett vs gross."""
-    n, g = sim.stats["nett"]["tidal_pct"]["p50"], sim.stats["gross"]["tidal_pct"]["p50"]
-    return f"Tidal delay share (P50): nett {n:.1f} % / gross {g:.1f} % of the duration excl. weather downtime."
-
-
 def build_sim_results(sim, params) -> go.Figure:
-    weather = sim.basis == "gross"
-    cols = ["nett", "gross"] if weather else ["nett"]
-    names = {"nett": "Nett (excl. weather)", "gross": "Gross (incl. weather)"}
+    cols = [sim.basis]
+    names = {"nett": "Planning", "gross": "Planning (incl. weather)"}
     rows = [("Tidal delay (h)", "tidal", 1), ("Tidal delay (% of duration excl. weather)", "tidal_pct", 1),
             ("Time restriction delay (h)", "restriction", 1), ("Weather downtime (h)", "weather", 1),
             ("Total delay (h)", "total", 1), ("Project duration (days)", "duration", 24)]
@@ -715,8 +689,7 @@ def build_sim_results(sim, params) -> go.Figure:
                       legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.08, yanchor="top"),
                       title=(f"Simulation results - variance on the phase durations ({_sim_note(sim, params)})<br>"
                              f"<sup>P50 = half of the runs finish earlier, P90 = 90 % of the runs finish earlier. "
-                             f"{'Nett and gross use the same drawn durations.' if weather else 'Weather downtime off: nett only.'}"
-                             f"</sup>" + (f"<br><sup>{_tidal_check(sim)}</sup>" if weather else "")
+                             f"All runs include weather downtime.</sup>"
                              + (f"<br><sup>{NO_VARIANCE_NOTE}</sup>" if _no_variance(params) else "")))
     return fig
 
@@ -727,7 +700,6 @@ def _export_inputs(params) -> dict:
                  ("Start date", datetime.combine(params.start_date, datetime.min.time())
                   + timedelta(hours=float(params.start_hour or 0)), ""),
                  ("Number of cycles", int(params.n_cycles or 0), ""),
-                 ("Planning basis", BASIS_GROSS if params.use_downtime == RESTRICT_YES else BASIS_NETT, ""),
                  ("Vessel draft loaded (departure)", _draft(params), "m"),
                  ("Vessel draft empty (entry)", _draft(params, empty=True), "m"),
                  ("Simulation runs (most likely run shown)", int(params.sim_runs or 300), ""),
@@ -756,7 +728,7 @@ class Scenario(vkt.Controller):
         params = _flat(params)
         sim = _simulation(params)
         res = sim.p50_plan
-        name = f"tide_planning_{res.start:%Y%m%d}_{res.cycles}cycles_{sim.basis}_P50.xlsx"
+        name = f"tide_planning_{res.start:%Y%m%d}_{res.cycles}cycles_P50.xlsx"
         return vkt.DownloadResult(build_excel(res, _export_inputs(params), _sim_duration(params, sim)), name)
 
     def download_simulation(self, params, **kwargs):
@@ -766,8 +738,8 @@ class Scenario(vkt.Controller):
         return vkt.DownloadResult(build_simulation_excel(sim, _export_inputs(params), _cycle_rows(params),
                                                          _sim_note(sim, params)), name)
 
-    # all result views show the simulation: the most likely (P50) run of the planning basis
-    # (nett, or gross when weather downtime is applied) and the spread over all runs
+    # all result views show the simulation (incl. weather downtime): the most likely (P50) run and the
+    # spread over all runs
     @vkt.PlotlyView("Planning", duration_guess=2)
     def planning_view(self, params, **kwargs):
         params = _flat(params)

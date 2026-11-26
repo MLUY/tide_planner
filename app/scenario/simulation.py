@@ -75,40 +75,33 @@ def simulate(*, start: datetime, phases: list[Phase], minus_pct: list[float], pl
         if m >= 100:
             raise PlanningError(f"Phase '{ph.name}': the minus variance must be less than 100 %.")
     rng = np.random.default_rng(int(seed))
+    # one planning per run: gross (incl. weather downtime) when a weather norm is given, otherwise without
+    basis = "gross" if weather is not None else "nett"
     runs = []
     for _ in range(n_runs):
         hours = draw_cycle_hours(rng, phases, minus_pct, plus_pct, n_cycles).tolist()
         shift_h = int(rng.integers(-24 * start_days, 24 * start_days + 1)) if start_days > 0 else 0
         run_start = start + timedelta(hours=shift_h)
-        common = dict(start=run_start, phases=phases, tide=tide, rule=rule, n_cycles=n_cycles,
-                      restrictions=restrictions, cycle_hours=hours, entry_rule=entry_rule)
-        nett = plan_installation(**common)
-        gross = plan_installation(**common, weather=weather) if weather is not None else nett
-        runs.append(dict(start=run_start, cycle_hours=hours, nett=_summary(nett), gross=_summary(gross)))
+        res = plan_installation(start=run_start, phases=phases, tide=tide, rule=rule, n_cycles=n_cycles,
+                                restrictions=restrictions, cycle_hours=hours, entry_rule=entry_rule, weather=weather)
+        runs.append({"start": run_start, "cycle_hours": hours, basis: _summary(res)})
 
-    basis = "gross" if weather is not None else "nett"
-    stats, finish = {}, {}
-    for b in ("nett", "gross"):
-        stats[b] = {m: _stats(np.array([r[b][m] for r in runs])) for m in METRICS}
-        # finish dates as hours since a fixed naive reference (independent of the computer's time zone)
-        ends = np.array([(r[b]["finish"] - _EPOCH).total_seconds() / 3600 for r in runs])
-        finish[b] = {q: _EPOCH + timedelta(hours=float(np.percentile(ends, int(q[1:]))))
-                     for q in ("p10", "p50", "p90")}
-    # most likely planning per basis: the run closest to the median in project duration AND tidal delay
+    stats = {basis: {m: _stats(np.array([r[basis][m] for r in runs])) for m in METRICS}}
+    # finish dates as hours since a fixed naive reference (independent of the computer's time zone)
+    ends = np.array([(r[basis]["finish"] - _EPOCH).total_seconds() / 3600 for r in runs])
+    finish = {basis: {q: _EPOCH + timedelta(hours=float(np.percentile(ends, int(q[1:]))))
+                      for q in ("p10", "p50", "p90")}}
+    # most likely planning: the run closest to the median in project duration AND tidal delay
     # (each scaled by its spread), so the planning shown is typical for both and not a 'lucky' or 'unlucky' run
-    p50_index, p50_plans = {}, {}
-    for b in ("nett", "gross"):
-        score = np.zeros(len(runs))
-        for m in ("duration", "tidal"):
-            v = np.array([r[b][m] for r in runs])
-            spread = np.percentile(v, 75) - np.percentile(v, 25)
-            score += np.abs(v - np.percentile(v, 50)) / (spread if spread > 1e-9 else 1.0)
-        idx = int(np.argmin(score))
-        r = runs[idx]
-        p50_index[b] = idx
-        p50_plans[b] = plan_installation(start=r["start"], phases=phases, tide=tide, rule=rule, n_cycles=n_cycles,
-                                         restrictions=restrictions, cycle_hours=r["cycle_hours"],
-                                         weather=weather if b == "gross" else None, entry_rule=entry_rule)
-    return SimulationResult(runs=runs, basis=basis, n_runs=n_runs, seed=int(seed), p50_index=p50_index[basis],
-                            p50_plan=p50_plans[basis], stats=stats, finish=finish,
-                            p50_plans=p50_plans, p50_indices=p50_index)
+    score = np.zeros(len(runs))
+    for m in ("duration", "tidal"):
+        v = np.array([r[basis][m] for r in runs])
+        spread = np.percentile(v, 75) - np.percentile(v, 25)
+        score += np.abs(v - np.percentile(v, 50)) / (spread if spread > 1e-9 else 1.0)
+    idx = int(np.argmin(score))
+    r = runs[idx]
+    p50 = plan_installation(start=r["start"], phases=phases, tide=tide, rule=rule, n_cycles=n_cycles,
+                            restrictions=restrictions, cycle_hours=r["cycle_hours"], weather=weather,
+                            entry_rule=entry_rule)
+    return SimulationResult(runs=runs, basis=basis, n_runs=n_runs, seed=int(seed), p50_index=idx, p50_plan=p50,
+                            stats=stats, finish=finish, p50_plans={basis: p50}, p50_indices={basis: idx})
