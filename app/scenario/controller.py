@@ -716,8 +716,15 @@ class Scenario(vkt.Controller):
 
     @vkt.PlotlyView("Planning (Gantt)", duration_guess=2)
     def gantt_view(self, params, **kwargs):
+        raw = params
         params = _flat(params)
-        return _result(build_gantt(_view_plan(params), (params.vessel_name or "").strip()), params)
+        res = _view_plan(params)
+        # diagnostic line in the viktor-cli terminal: which inputs the view received and what it shows
+        print(f"[tide planner] {datetime.now():%H:%M:%S} Gantt view calculated | monthly downtime = "
+              f"{params.use_downtime!r} | time restrictions = {params.use_time_restrictions!r} | start = "
+              f"{res.start:%Y-%m-%d %H:%M} | title = {_basis_text(res)!r} | weather {res.total_weather_h:.0f} h | "
+              f"input keys = {sorted(raw.keys()) if hasattr(raw, 'keys') else type(raw).__name__}", flush=True)
+        return _result(build_gantt(res, (params.vessel_name or "").strip()), params)
 
     @vkt.PlotlyView("Tide and cycles", duration_guess=2)
     def tide_cycles_view(self, params, **kwargs):
