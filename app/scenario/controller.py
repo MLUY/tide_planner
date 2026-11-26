@@ -363,8 +363,9 @@ def _json_safe(value):
 
 
 def build_tide_cycles(res, depth_m: float | None = None) -> dict:
-    """Tide level (cm) - or, with depth_m (dredged channel depth CD in m), the water depth in the channel
-    (m) = depth_m + tide level - with the tidal windows, departures / entries and the cycle sequence below.
+    """Tide level (cm) with the tidal windows, departures / entries and the cycle sequence below. With depth_m
+    (dredged channel depth CD in m) a second y-axis on the right shows the water depth in the channel
+    (m) = depth_m + tide level: the same curve, only a different scale.
     Plotly figure as a dict. The many background blocks are added to the dict at the end as plain
     shapes: letting plotly create/validate them one by one takes seconds to minutes for long plannings."""
     tide, rule = res.tide, res.rule
@@ -377,13 +378,11 @@ def build_tide_cycles(res, depth_m: float | None = None) -> dict:
     level = tide.level_cm(hrs)
     depth = depth_m is not None
 
-    def y(cm):      # tide level (cm) -> value on the y-axis
-        return depth_m + np.asarray(cm, float) / 100 if depth else cm
+    def wd(cm):     # tide level (cm) -> water depth in the channel (m)
+        return depth_m + cm / 100
 
     def fmt(cm):
-        return f"{float(y(cm)):.2f} m" if depth else f"{cm:.0f} cm"
-
-    unit_name = "Water depth" if depth else "Tide level"
+        return f"{cm:.0f} cm" + (f" / {wd(cm):.2f} m" if depth else "")
     is_open = tide.gate_open(hrs, rule)
     is_open_entry = tide.gate_open(hrs, entry_rule)
 
@@ -412,13 +411,13 @@ def build_tide_cycles(res, depth_m: float | None = None) -> dict:
                                  marker=dict(symbol="square", size=12, color="grey", opacity=0.5)),
                       row=1, col=1)
 
-    fig.add_trace(go.Scatter(x=times, y=y(level), mode="lines", name=unit_name,
+    fig.add_trace(go.Scatter(x=times, y=level, mode="lines", name="Tide level",
                              line=dict(color="#1f77b4", width=1.5)), row=1, col=1)
     if two_rules:     # entry (empty draft) needs less tide: its window is wider
-        fig.add_trace(go.Scatter(x=times, y=np.where(is_open_entry, y(level), np.nan), mode="lines",
+        fig.add_trace(go.Scatter(x=times, y=np.where(is_open_entry, level, np.nan), mode="lines",
                                  name="Window open - entry (empty)", line=dict(color="#98df8a", width=5)),
                       row=1, col=1)
-    fig.add_trace(go.Scatter(x=times, y=np.where(is_open, y(level), np.nan), mode="lines",
+    fig.add_trace(go.Scatter(x=times, y=np.where(is_open, level, np.nan), mode="lines",
                              name="Window open - departure (loaded)" if two_rules else "Window open",
                              line=dict(color="#2ca02c", width=3)), row=1, col=1)
     # required tide lines (as plain shapes too; add_hline would copy all shapes again)
@@ -429,23 +428,20 @@ def build_tide_cycles(res, depth_m: float | None = None) -> dict:
         lines += [(entry_rule.rising_cm, "dash", f"Rising min. entry {fmt(entry_rule.rising_cm)}", "top", "#9467bd"),
                   (entry_rule.falling_cm, "dot", f"Falling min. entry {fmt(entry_rule.falling_cm)}", "bottom",
                    "#9467bd")]
-    if depth:       # dredged depth = water depth at tide level 0 (CD)
-        lines.append((0.0, "solid", f"Dredged depth CD {depth_m:.2f} m", "top", "#8c564b"))
     for level_cm, dash, text, anchor, color in lines:
-        yv = float(y(level_cm))
-        shapes.append(dict(type="line", xref="x domain", x0=0, x1=1, yref="y", y0=yv, y1=yv,
+        shapes.append(dict(type="line", xref="x domain", x0=0, x1=1, yref="y", y0=level_cm, y1=level_cm,
                            line=dict(color=color, dash=dash)))
-        fig.add_annotation(xref="x domain", x=0, yref="y", y=yv, text=text, showarrow=False,
+        fig.add_annotation(xref="x domain", x=0, yref="y", y=level_cm, text=text, showarrow=False,
                            xanchor="left", yanchor=anchor, font=dict(color=color))
 
     for direction, symbol, color in (("Departure", "triangle-up", "#ff7f0e"), ("Entry", "triangle-down", "#9467bd")):
         g = [x for x in res.gates if x["direction"] == direction]
         fig.add_trace(go.Scatter(
-            x=[x["time"] for x in g], y=[float(y(x["level_cm"])) for x in g], mode="markers", name=direction,
+            x=[x["time"] for x in g], y=[x["level_cm"] for x in g], mode="markers", name=direction,
             marker=dict(symbol=symbol, size=10, color=color),
             text=[f"Cycle {x['cycle']} {direction.lower()} {x['time']:%Y-%m-%d %H:%M} "
-                  + (f"Water depth {float(y(x['level_cm'])):.2f} m (tide {x['level_cm']:.0f} cm, {x['tide']}) "
-                     if depth else f"Tide {x['level_cm']:.0f} cm ({x['tide']}) ")
+                  + f"Tide {x['level_cm']:.0f} cm ({x['tide']}) "
+                  + (f"Water depth {wd(x['level_cm']):.2f} m " if depth else "")
                   + f"Waited {x['wait_h']:.1f} h"
                   + (f" (time restriction {x['restriction_wait_h']:.1f} h)"
                      if x["restriction_wait_h"] > 1e-9 else "") for x in g],
@@ -464,7 +460,21 @@ def build_tide_cycles(res, depth_m: float | None = None) -> dict:
             hoverinfo="text", textposition="none"), row=2, col=1)
 
     fig.update_xaxes(type="date")
-    fig.update_yaxes(title_text="Water depth in channel (m)" if depth else "Tide level (cm)", row=1, col=1)
+    fig.update_yaxes(title_text="Tide level (cm)", row=1, col=1)
+    if depth:
+        # second y-axis (right) with the water depth: both axes get the same fixed range (converted), so the
+        # scales stay aligned; vertical zoom is switched off for that reason (zooming in time still works)
+        vals = np.concatenate([level[np.isfinite(level)], [ln[0] for ln in lines]])
+        lo, hi = float(vals.min()), float(vals.max())
+        pad = 0.05 * (hi - lo or 100)
+        lo, hi = lo - pad, hi + pad
+        fig.update_yaxes(range=[lo, hi], fixedrange=True, row=1, col=1)
+        fig.add_trace(go.Scatter(x=[times[0]], y=[wd(lo)], mode="markers", marker=dict(opacity=0),
+                                 showlegend=False, hoverinfo="skip", yaxis="y3"))
+        fig.update_layout(yaxis3=dict(overlaying="y", side="right", range=[wd(lo), wd(hi)], fixedrange=True,
+                                      showgrid=False, zeroline=False, tick0=0, dtick=1,
+                                      title_text=f"Water depth in channel (m) - dredged depth CD {depth_m:.2f} m + tide"),
+                          legend=dict(x=1.07))
     fig.update_yaxes(showticklabels=False, row=2, col=1)
     repeat = (f"<br><sup>Tidal data {tide.data_start:%Y-%m-%d} - {tide.data_end:%Y-%m-%d} repeated for other "
               f"years</sup>" if tide.repeated and not (tide.is_measured(res.start) and tide.is_measured(res.finish))
@@ -763,8 +773,8 @@ def _export_inputs(params) -> dict:
         else f"default: {DEFAULT_TIDE.name}")
 
 
-def _cycle_figure(sim, depth_m: float | None = None, subtitle: str = "") -> dict:
-    """Cycle view of the most likely run: tide level, or water depth in the channel when depth_m is given."""
+def _cycle_figure(sim, depth_m: float | None = None) -> dict:
+    """Cycle view of the most likely run: tide level (left axis) and water depth in the channel (right axis)."""
     res = sim.p50_plan
     fig = build_tide_cycles(res, depth_m)
     # title near the top: most likely planning + basis / cycles + delays / small print (tidal data note)
@@ -777,11 +787,9 @@ def _cycle_figure(sim, depth_m: float | None = None, subtitle: str = "") -> dict
         parts.append(f"time restriction {res.total_restriction_wait_h:.0f} h")
     text = (f"<b>Most likely planning (P50 run {sim.p50_index + 1} of {sim.n_runs})</b> | {_basis_text(res)}<br>"
             f"{res.cycles} cycles | Total delay {res.total_wait_h:.0f} h ({', '.join(parts)}){small}")
-    if subtitle:
-        text += f"<br><span style='font-size:12px'>{subtitle}</span>"
     fig["layout"]["title"] = dict(text=text, x=0.01, xanchor="left", y=1 - 18 / 650, yanchor="top",
                                   font=dict(size=15))
-    fig["layout"]["margin"] = dict(t=(95 if small else 80) + (18 if subtitle else 0))
+    fig["layout"]["margin"] = dict(t=95 if small else 80)
     return fig
 
 
@@ -823,16 +831,7 @@ class Scenario(vkt.Controller):
     @vkt.PlotlyView("Cycle", duration_guess=2)
     def cycle_view(self, params, **kwargs):
         params = _flat(params)
-        return _result(_cycle_figure(_simulation(params)), params)
-
-    @vkt.PlotlyView("Water depth", duration_guess=2)
-    def depth_view(self, params, **kwargs):
-        params = _flat(params)
-        depth = float(params.channel_depth or 0)
-        where = (params.channel_from_to or "").strip()
-        sub = (f"Water depth in the channel{' (' + where + ')' if where else ''} = dredged depth CD "
-               f"{depth:.2f} m + tide | required: draft + keel clearance + margin")
-        return _result(_cycle_figure(_simulation(params), depth, sub), params)
+        return _result(_cycle_figure(_simulation(params), float(params.channel_depth or 0)), params)
 
     @vkt.PlotlyView("Table", duration_guess=2)
     def table_view(self, params, **kwargs):

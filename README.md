@@ -62,9 +62,7 @@ from / until, hours of the day). With **No** (default) the table is hidden and i
 ## Results (all from the simulation)
 - **Planning**: Gantt of the most likely planning, titled *Gross planning most likely* with start and finish.
 - **Cycle**: tide and cycles of the P50 run, with the required tide for departure (loaded) and entry (empty).
-- **Water depth**: the same, as water depth in the channel (dredged depth CD + tide, in m) with the required
-  depth (draft + keel clearance + margin) for departure (loaded) and entry (empty), the departures / entries
-  and the cycle sequence below.
+  The right y-axis shows the same curve as water depth in the channel (dredged depth CD + tide, in m).
 - **Table**: cycle table of the P50 run.
 - **Simulation**: P10 / P50 / P90 / average of tidal, time restriction, weather and total delay, tidal delay
   as % of the duration excl. weather, project duration and finish.
