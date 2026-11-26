@@ -226,7 +226,9 @@ class Parametrization(vkt.Parametrization):
         "Add one row per time slot (e.g. night closure, pilot shift change); "
         "any number of slots can be combined and they may overlap.",
         visible=_RESTRICT_ON)
-    added_features.restrictions.time_restrictions = vkt.Table("Time restrictions", visible=_RESTRICT_ON)
+    added_features.restrictions.time_restrictions = vkt.Table(
+        "Time restrictions", visible=_RESTRICT_ON,
+        default=[dict(description="Night - no sailing", from_h=22, to_h=6)])
     added_features.restrictions.time_restrictions.description = vkt.TextField("Description")
     # no min/max on table fields (not supported by VIKTOR); 0-24 h is checked by the planning
     added_features.restrictions.time_restrictions.from_h = vkt.NumberField("Not allowed from", suffix="h")
@@ -321,7 +323,7 @@ def _delay_text(res) -> str:
     return txt
 
 
-def build_gantt(res, vessel: str = "") -> go.Figure:
+def build_gantt(res, vessel: str = "", note: str = "") -> go.Figure:
     order = []
     for s in res.segments:
         if s["activity"] not in order:
@@ -338,7 +340,7 @@ def build_gantt(res, vessel: str = "") -> go.Figure:
         parts.append(f"weather {res.total_weather_h:.0f} h")
     if res.restrictions:
         parts.append(f"time restriction {res.total_restriction_wait_h:.0f} h")
-    delay = f"Total delay {res.total_wait_h:.0f} h ({', '.join(parts)})"
+    delay = f"Total delay {res.total_wait_h:.0f} h ({', '.join(parts)})" + (f" - <i>{note}</i>" if note else "")
     fig.update_layout(
         title=(f"{_basis_text(res)} | {vessel + ' | ' if vessel else ''}{res.cycles} cycles | "
                f"nominal cycle {res.nominal_cycle_h:.0f} h<br>"
@@ -716,7 +718,10 @@ class Scenario(vkt.Controller):
     @vkt.PlotlyView("Planning (Gantt)", duration_guess=2)
     def gantt_view(self, params, **kwargs):
         params = _flat(params)
-        return _result(build_gantt(_view_plan(params), (params.vessel_name or "").strip()), params)
+        res = _view_plan(params)
+        note = ("time restrictions switched on, but no time slots entered"
+                if params.use_time_restrictions == RESTRICT_YES and not res.restrictions else "")
+        return _result(build_gantt(res, (params.vessel_name or "").strip(), note), params)
 
     @vkt.PlotlyView("Tide and cycles", duration_guess=2)
     def tide_cycles_view(self, params, **kwargs):
