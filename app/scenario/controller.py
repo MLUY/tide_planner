@@ -389,7 +389,7 @@ def build_tide_cycles(res, depth_m: float | None = None) -> dict:
         return depth_m + cm / 100
 
     def fmt(cm):
-        return f"{cm:.0f} cm" + (f" / {wd(cm):.2f} m" if depth else "")
+        return f"{wd(cm):.2f} m / {cm:.0f} cm" if depth else f"{cm:.0f} cm"
     is_open = tide.gate_open(hrs, rule)
     is_open_entry = tide.gate_open(hrs, entry_rule)
 
@@ -469,18 +469,19 @@ def build_tide_cycles(res, depth_m: float | None = None) -> dict:
     fig.update_xaxes(type="date")
     fig.update_yaxes(title_text="Tide level (cm)", row=1, col=1)
     if depth:
-        # second y-axis (right) with the water depth: both axes get the same fixed range (converted), so the
-        # scales stay aligned; vertical zoom is switched off for that reason (zooming in time still works)
+        # water depth on the left axis, tide level on the right axis (the traces are in cm, on the right axis).
+        # Both axes get the same fixed range (converted), so the scales stay aligned; vertical zoom is
+        # switched off for that reason (zooming in time still works)
         vals = np.concatenate([level[np.isfinite(level)], [ln[0] for ln in lines]])
         lo, hi = float(vals.min()), float(vals.max())
         pad = 0.05 * (hi - lo or 100)
         lo, hi = lo - pad, hi + pad
-        fig.update_yaxes(range=[lo, hi], fixedrange=True, row=1, col=1)
+        fig.update_yaxes(range=[lo, hi], fixedrange=True, side="right", showgrid=False, row=1, col=1)
         fig.add_trace(go.Scatter(x=[times[0]], y=[wd(lo)], mode="markers", marker=dict(opacity=0),
                                  showlegend=False, hoverinfo="skip", yaxis="y3"))
-        fig.update_layout(yaxis3=dict(overlaying="y", side="right", range=[wd(lo), wd(hi)], fixedrange=True,
-                                      showgrid=False, zeroline=False, tick0=0, dtick=1,
-                                      title_text=f"Water depth in channel (m) - dredged depth CD {depth_m:.2f} m + tide"),
+        fig.update_layout(yaxis3=dict(overlaying="y", side="left", range=[wd(lo), wd(hi)], fixedrange=True,
+                                      zeroline=False, tick0=0, dtick=1,
+                                      title_text=f"Water depth (m) = {depth_m:g} m + tide"),
                           legend=dict(x=1.07))
     fig.update_yaxes(showticklabels=False, row=2, col=1)
     repeat = (f"<br><sup>Tidal data {tide.data_start:%Y-%m-%d} - {tide.data_end:%Y-%m-%d} repeated for other "
