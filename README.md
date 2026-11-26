@@ -62,12 +62,14 @@ MWS window, yearly value and one table with two columns (month | workability %).
 BL2 MP Installation Worst (10 hr): 57.8 65.5 76.6 81.9 88.7 91.7 84.7 80.6 79.2 69.9 66.7 57.8 (year 74.3).
 
 ## Nett / gross planning
-*Planning basis* (tab Input), default **Gross**:
-- **Nett**: cycles with tidal and time restriction waits, no weather downtime.
-- **Gross**: in every cycle the vessel waits on weather at site (after *Sail to site*) for
+Follows the weather choice *Apply monthly downtime percentages?*:
+- **No** = **nett planning**: cycles with tidal and time restriction waits, no weather downtime.
+- **Yes** = **gross planning**: in every cycle the vessel waits on weather at site (after *Sail to site*) for
   (working hours of the cycle) x (100 / workability of that month - 1); the tidal windows are then
-  planned on this later timeline. Without weather downtime gross = nett.
-All views and the Excel export follow the selected basis (Weather downtime is shown in grey).
+  planned on this later timeline (weather downtime shown in teal).
+All views, the project duration, the Excel export and the start date sensitivity follow this choice.
+The Gantt title shows: planning, vessel, cycles, nominal cycle / start and end / total delay split into
+tidal, weather and time restriction (whole hours).
 
 ## Total project duration
 Section in tab *Added features*, view **Project duration** and Excel (Summary + sheet *Weather downtime*),

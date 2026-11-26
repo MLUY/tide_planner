@@ -103,9 +103,9 @@ def _plans(params):
     if key not in _PLAN_CACHE:
         if len(_PLAN_CACHE) > 20:
             _PLAN_CACHE.clear()
-        # weather downtime only counts in the gross planning: with 'Nett' selected it is 0 everywhere
-        # (views, project duration, Excel, sensitivity), also when monthly downtime is switched on
-        norm = _selected_norm(params) if params.planning_basis != BASIS_NETT else None
+        # nett or gross follows the weather choice: monthly downtime 'Yes' = gross planning (incl. weather),
+        # 'No' = nett planning (weather 0 everywhere, gross = nett)
+        norm = _selected_norm(params)
         try:
             tide = load_tide(data)              # read the file once for both plannings
         except PlanningError as exc:
@@ -117,9 +117,10 @@ def _plans(params):
 
 
 def _view_plan(params):
-    """The planning shown in the views and the Excel export: gross (default) or nett."""
-    nett, gross, _ = _plans(params)
-    return nett if params.planning_basis == BASIS_NETT else gross
+    """The planning shown in the views and the Excel export: gross when monthly downtime is applied,
+    otherwise nett (then gross is the nett planning)."""
+    _, gross, _ = _plans(params)
+    return gross
 
 
 def _selected_norm(params):
@@ -171,10 +172,6 @@ class Parametrization(vkt.Parametrization):
     input.start_date = vkt.DateField("Start date")
     input.start_hour = vkt.NumberField("Start time (hour of day)", default=0, min=0, max=23.99, suffix="h")
     input.n_cycles = vkt.IntegerField("Number of cycles", default=10, min=1)
-    input.planning_basis = vkt.OptionField("Planning basis", options=[BASIS_GROSS, BASIS_NETT], default=BASIS_GROSS,
-                                           flex=60, description="Gross includes the weather downtime from the tab "
-                                                                "'Added features'; without weather downtime gross "
-                                                                "equals nett.")
 
     input.lb1 = vkt.LineBreak()
     input.cycle_text = vkt.Text("### (Nett) cycle\nThe port is left at the start of *Sail to site* "
@@ -236,8 +233,11 @@ class Parametrization(vkt.Parametrization):
     added_features.restrictions.time_restrictions.to_h = vkt.NumberField("Not allowed until", suffix="h")
 
     added_features.weather = vkt.Section("Weather downtime (SME)", initially_expanded=True)
-    added_features.weather.use_downtime = vkt.OptionField("Apply monthly downtime percentages?",
-                                                          options=[RESTRICT_NO, RESTRICT_YES], default=RESTRICT_NO)
+    added_features.weather.use_downtime = vkt.OptionField(
+        "Apply monthly downtime percentages?", options=[RESTRICT_NO, RESTRICT_YES], default=RESTRICT_NO,
+        description="Yes = gross planning (incl. weather downtime); No = nett planning (no weather downtime).")
+    added_features.weather.basis_note = vkt.Text("**No** = nett planning, **Yes** = gross planning "
+                                                 "(including weather downtime) in all views and the Excel export.")
     added_features.weather.downtime_text = vkt.Text(
         "Workability per month from the Site Metocean Report (SME): the percentage of time in which the "
         "operation can be performed within the MWS weather window. In the gross planning, the vessel waits "
@@ -573,7 +573,7 @@ def _sensitivity(params) -> dict:
     metric = params.sens_metric if params.sens_metric in SENS_METRICS else "Tidal delay"
     hourly = params.sens_step != SENS_DAILY
     nett, gross, norm = _plans(params)                       # also validates the inputs
-    weather = norm if (norm and params.planning_basis != BASIS_NETT) else None
+    weather = norm
     planned = gross if weather else nett
     try:
         tide = load_tide(_tide_bytes(params))
@@ -684,7 +684,7 @@ def _export_inputs(params) -> dict:
                  ("Start date", datetime.combine(params.start_date, datetime.min.time())
                   + timedelta(hours=float(params.start_hour or 0)), ""),
                  ("Number of cycles", int(params.n_cycles or 0), ""),
-                 ("Planning basis", params.planning_basis or BASIS_GROSS, ""),
+                 ("Planning basis", BASIS_GROSS if params.use_downtime == RESTRICT_YES else BASIS_NETT, ""),
                  ("Vessel draft", float(params.draft or 0), "m"),
                  ("Keel clearance", float(params.keel_clearance or 0), "m"),
                  ("Tidal entrance channel (from - to)", params.channel_from_to or "", ""),
