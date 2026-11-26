@@ -531,7 +531,7 @@ def build_duration(d) -> go.Figure:
                           margin=dict(t=60, b=20, l=60, r=20))
         return fig
     # table on top (fixed height so all rows are visible), compact bar chart below
-    fig = make_subplots(rows=2, cols=1, row_heights=[0.62, 0.38], vertical_spacing=0.04,
+    fig = make_subplots(rows=2, cols=1, row_heights=[0.60, 0.40], vertical_spacing=0.09,
                         specs=[[{"type": "table"}], [{"type": "xy"}]])
     fig.add_trace(table, row=1, col=1)
     # month, workability and number of cycles under the bar; the days inside the bar (always horizontal)
@@ -547,13 +547,19 @@ def build_duration(d) -> go.Figure:
         hovertemplate="%{x}: %{y:.1f} days (%{customdata[0]:.1f} h) weather downtime<br>"
                       "workability %{customdata[1]:.1f} %, %{customdata[2]} cycle(s)<extra></extra>"),
         row=2, col=1)
-    fig.update_yaxes(title_text="Days", rangemode="tozero", row=2, col=1)
+    fig.update_yaxes(title_text="Weather downtime (days)", rangemode="tozero", row=2, col=1)
     fig.update_xaxes(tickfont=dict(size=11), row=2, col=1)
+    # small title directly above the bar chart, explaining what the bars show
+    fig.add_annotation(xref="x domain", yref="y domain", x=0, y=1.02, xanchor="left", yanchor="bottom",
+                       showarrow=False, align="left",
+                       text=("<b>Weather downtime per month (gross planning)</b><br>"
+                             "<span style='font-size:11px'>Days the vessel waits on weather at site, counted in the "
+                             "month it arrives at site. Below each bar: workability of that month (SME) | number of "
+                             "cycles arriving at site.</span>"))
     fig.update_layout(height=680, margin=dict(t=75, b=15, l=60, r=20), showlegend=False, bargap=0.2,
                       uniformtext=dict(minsize=11, mode="show"),
                       title=f"Total project duration - nett {d.nett_total_h / 24:.1f} days, gross "
-                            f"{d.gross_total_h / 24:.1f} days (incl. weather)<br><sup>Weather downtime per month "
-                            f"(month of arrival at site) - label: workability of the month and number of cycles</sup>")
+                            f"{d.gross_total_h / 24:.1f} days (incl. weather)")
     return fig
 
 
