@@ -46,8 +46,9 @@ def _flat(params):
 
 def _draft(params, empty=False) -> float:
     """Loaded draft for departure; empty draft for entry (falls back to the loaded draft when not given)."""
-    loaded = float(params.draft or 0)
-    return float(params.draft_empty) if empty and params.draft_empty not in (None, "") else loaded
+    loaded = float(params.get("draft") or 0)
+    empty_draft = params.get("draft_empty")      # may be missing in scenarios saved before this field existed
+    return float(empty_draft) if empty and empty_draft not in (None, "") else loaded
 
 
 def _required_tide(params, empty=False):
@@ -154,12 +155,12 @@ class Parametrization(vkt.Parametrization):
     input = vkt.Tab("Input")
     input.title = vkt.Text("##  Tidal planner")
     input.intro = vkt.Text(
-        "*The Tidal planner plans every installation cycle against the tidal windows of the port entrance, "
-        "optionally with weather downtime and time restrictions. Because the cycles repeat with identical "
-        "durations, a small shift can make the whole planning keep hitting or keep missing the tidal windows - a "
-        "'lucky' or 'unlucky' result. To avoid this, every simulation run varies the phase durations within the "
-        "- % / + % of the cycle table, and the results show the most likely planning (P50) and the spread "
-        "(P10 - P90).*")
+        "*The Tidal planner schedules each installation cycle against the tidal windows of the port entrance, "
+        "including weather downtime and, where applicable, time restrictions. With identical cycle durations, "
+        "small timing shifts can systematically align the schedule with favourable or unfavourable tidal windows, "
+        "so a single deterministic planning is not representative. Each simulation run therefore varies the phase "
+        "durations within the - % / + % ranges of the cycle table, and the results present the most likely "
+        "planning (P50) and the range of outcomes (P10 - P90).*")
 
     input.vessel_text = vkt.Text("### Vessel")
     input.vessel_name = vkt.TextField("Vessel Name", default="Bokalift 2", flex=100)
