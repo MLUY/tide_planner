@@ -105,6 +105,7 @@ def _run_plan(params, weather=None, tide=None, shift_days=0):
 
 _RESTRICT_ON = vkt.IsEqual(vkt.Lookup("constraints.use_time_restrictions"), RESTRICT_YES)
 _PLAN_CACHE: dict = {}
+UI_ONLY = {"show_tide_format"}     # display-only inputs: changing them does not recalculate the planning
 
 
 def _log(what: str, params, extra: str = "") -> None:
@@ -119,7 +120,7 @@ def _plans(params):
     """(planning incl. weather downtime, norm) for flat params. Cached: the views need the same planning."""
     # the uploaded tide file is identified by its content (its object text is not unique)
     data = _tide_bytes(params)
-    key = json.dumps({**{k: v for k, v in params.items() if k != "tide_file"},
+    key = json.dumps({**{k: v for k, v in params.items() if k != "tide_file" and k not in UI_ONLY},
                       "tide_file": hashlib.sha1(data).hexdigest()}, default=str, sort_keys=True)
     if key not in _PLAN_CACHE:
         _log("new planning calculated", params)
@@ -203,6 +204,12 @@ class Parametrization(vkt.Parametrization):
     input.margin_falling = vkt.NumberField("Extra margin - falling tide", suffix="cm", default=40, min=0)
     input.required = vkt.OutputField("Required tide", value=_tide_summary, flex=100)
     input.tide_file = vkt.FileField("Tidal data (optional, default Gunsan 2026)", file_types=[".csv"])
+    input.show_tide_format = vkt.parametrization.ToggleButton("File format instructions", flex=100)
+    input.tide_format_note = vkt.Text("*File format: .csv, comma separated, header row, then one row per time "
+                                      "(e.g. hourly): column 1 date-time as 2026-01-01 00:00 (or 01/01/2026 00:00, "
+                                      "day first), column 2 tide level in cm above chart datum (CD), e.g. "
+                                      "2026-01-01 00:00,503. Other columns are ignored.*",
+                                      visible=vkt.IsTrue(vkt.Lookup("input.show_tide_format")))
     input.tide_repeat_note = vkt.Text("*Note: the tidal data of one year is repeated for every other year "
                                       "(same calendar date and time), so the tidal data never runs out. This needs "
                                       "a file of at least one full year; a shorter file is only used for its own "
@@ -339,7 +346,7 @@ def build_gantt(res, vessel: str = "", note: str = "") -> go.Figure:
 def _inputs_revision(params) -> str:
     """Short fingerprint of all inputs (uploaded tide file by content)."""
     data = _tide_bytes(params)
-    text = json.dumps({**{k: v for k, v in params.items() if k != "tide_file"},
+    text = json.dumps({**{k: v for k, v in params.items() if k != "tide_file" and k not in UI_ONLY},
                        "tide_file": hashlib.sha1(data).hexdigest()}, default=str, sort_keys=True)
     return hashlib.sha1(text.encode()).hexdigest()[:16]
 
