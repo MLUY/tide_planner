@@ -595,14 +595,25 @@ def _sim_duration(params, sim=None):
 
 
 def build_sim_gantt(sim, params) -> go.Figure:
-    """The P50 run as a Gantt; title adds the simulation and the P10-P90 finish."""
-    fig = build_gantt(sim.p50_plan, (params.vessel_name or "").strip())
+    """The P50 run as a Gantt. Title, from the top:
+    most likely planning + basis / vessel, cycles, nominal cycle / start - end / P10-P50-P90 finish / delays."""
+    res = sim.p50_plan
+    vessel = (params.vessel_name or "").strip()
+    fig = build_gantt(res, vessel)
+    delay = fig.layout.title.text.split("<br>")[-1]          # 'Total delay ... (tidal, weather, restriction)'
     f = sim.finish[sim.basis]
-    lines = fig.layout.title.text.split("<br>")
-    lines[0] = f"Most likely planning (P50 run {sim.p50_index + 1} of {sim.n_runs}) - " + lines[0]
-    lines.insert(2, f"Finish P10 {f['p10'].day} {f['p10']:%B %Y} | P50 {f['p50'].day} {f['p50']:%B %Y} | "
-                    f"P90 {f['p90'].day} {f['p90']:%B %Y} ({_sim_note(sim, params)})")
-    fig.update_layout(title="<br>".join(lines), height=600, margin=dict(l=220, t=160))
+    lines = [
+        f"<b>Most likely planning (P50 run {sim.p50_index + 1} of {sim.n_runs})</b> | {_basis_text(res)}",
+        f"{vessel + ' | ' if vessel else ''}{res.cycles} cycles | nominal cycle {res.nominal_cycle_h:.0f} h",
+        f"Start {res.start.day} {res.start:%B %Y} | End {res.finish.day} {res.finish:%B %Y}",
+        f"Finish P10 {f['p10'].day} {f['p10']:%B %Y} | P50 {f['p50'].day} {f['p50']:%B %Y} | "
+        f"P90 {f['p90'].day} {f['p90']:%B %Y} ({_sim_note(sim, params)})",
+        delay,
+    ]
+    # title anchored 18 px below the top edge (clear of the toolbar), chart right below it
+    fig.update_layout(title=dict(text="<br>".join(lines), x=0.01, xanchor="left", y=1 - 18 / 640, yanchor="top",
+                                 font=dict(size=15)),
+                      height=640, margin=dict(l=220, t=140))
     return fig
 
 
