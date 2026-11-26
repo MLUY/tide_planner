@@ -93,6 +93,14 @@ _DOWNTIME_ON = vkt.IsEqual(vkt.Lookup("added_features.weather.use_downtime"), RE
 _PLAN_CACHE: dict = {}
 
 
+def _log(what: str, params, extra: str = "") -> None:
+    """Diagnostic line in the viktor-cli terminal: shows that VIKTOR asked for a calculation and with
+    which choices (to find out why views do not update after a change). Temporary."""
+    print(f"[tide planner] {datetime.now():%H:%M:%S} {what:24s} | time restrictions = "
+          f"{params.get('use_time_restrictions')!r} | monthly downtime = {params.get('use_downtime')!r} | "
+          f"start = {params.get('start_date')} {params.get('start_hour')} h {extra}", flush=True)
+
+
 def _plans(params):
     """(nett planning, gross planning, norm) for flat params; gross = nett without weather downtime.
     Cached, because the output fields and views all need the same plannings."""
@@ -101,6 +109,7 @@ def _plans(params):
     key = json.dumps({**{k: v for k, v in params.items() if k != "tide_file"},
                       "tide_file": hashlib.sha1(data).hexdigest()}, default=str, sort_keys=True)
     if key not in _PLAN_CACHE:
+        _log("new planning calculated", params)
         if len(_PLAN_CACHE) > 20:
             _PLAN_CACHE.clear()
         # nett or gross follows the weather choice: monthly downtime 'Yes' = gross planning (incl. weather),
@@ -374,6 +383,8 @@ def _result(fig, params) -> "vkt.PlotlyResult":
     data is new (otherwise e.g. a new start time could stay invisible until a page refresh), and
     uirevision resets zoom/pan to the new planning."""
     fig_dict = fig if isinstance(fig, dict) else json.loads(fig.to_json())
+    title = str(fig_dict.get("layout", {}).get("title", {}).get("text", "")).split("<br>")
+    _log("view sent to browser", params, "| " + " / ".join(title[:3])[:140])
     rev = _inputs_revision(params)
     fig_dict.setdefault("layout", {})["datarevision"] = rev
     fig_dict["layout"]["uirevision"] = rev
