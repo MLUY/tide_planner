@@ -168,7 +168,7 @@ class Parametrization(vkt.Parametrization):
     input.cycle = vkt.Table("Cycle phases", default=DEFAULT_CYCLE)
     input.cycle.phase = vkt.TextField("Phase")
     input.cycle.type = vkt.OptionField("Type", options=PHASE_TYPES)
-    input.cycle.hours = vkt.NumberField("Duration", suffix="hr", min=0)
+    input.cycle.hours = vkt.NumberField("Duration", suffix="hr")   # no min/max: not supported in a table
 
     input.lb2 = vkt.LineBreak()
     input.vessel_text = vkt.Text("### Vessel")
@@ -212,10 +212,9 @@ class Parametrization(vkt.Parametrization):
         visible=_RESTRICT_ON)
     added_features.restrictions.time_restrictions = vkt.Table("Time restrictions", visible=_RESTRICT_ON)
     added_features.restrictions.time_restrictions.description = vkt.TextField("Description")
-    added_features.restrictions.time_restrictions.from_h = vkt.NumberField("Not allowed from", suffix="h",
-                                                                           min=0, max=24)
-    added_features.restrictions.time_restrictions.to_h = vkt.NumberField("Not allowed until", suffix="h",
-                                                                         min=0, max=24)
+    # no min/max on table fields (not supported by VIKTOR); 0-24 h is checked by the planning
+    added_features.restrictions.time_restrictions.from_h = vkt.NumberField("Not allowed from", suffix="h")
+    added_features.restrictions.time_restrictions.to_h = vkt.NumberField("Not allowed until", suffix="h")
 
     added_features.weather = vkt.Section("Weather downtime (SME)", initially_expanded=True)
     added_features.weather.use_downtime = vkt.OptionField("Apply monthly downtime percentages?",
@@ -237,7 +236,8 @@ class Parametrization(vkt.Parametrization):
     added_features.workability.downtime_months = vkt.Table("Workability per month",
                                                            default=default_month_rows())
     added_features.workability.downtime_months.month = vkt.TextField("Month")
-    added_features.workability.downtime_months.pct = vkt.NumberField("Workability", suffix="%", min=0, max=100)
+    # no min/max on table fields (not supported by VIKTOR); 0-100 % is checked when the norm is read
+    added_features.workability.downtime_months.pct = vkt.NumberField("Workability", suffix="%")
 
     added_features.duration = vkt.Section("Total project duration", initially_expanded=True)
     added_features.duration.out_cycles = vkt.OutputField(
