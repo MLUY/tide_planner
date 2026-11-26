@@ -343,7 +343,7 @@ def build_simulation_excel(sim, inputs: dict | None = None, cycle_rows=None, not
     for c in cols:
         head += [f"{names[c]}: finish", "duration (days)", "tidal (h)", "time restriction (h)", "weather (h)",
                  "total delay (h)"]
-    head += ["Average cycle work (h)"]
+    head += ["Systematic factor", "Average cycle work (h)"]
     rows = []
     for i, r in enumerate(sim.runs, 1):
         vals = [i, r["start"]]
@@ -351,14 +351,15 @@ def build_simulation_excel(sim, inputs: dict | None = None, cycle_rows=None, not
             x = r[c]
             vals += [x["finish"], round(x["duration"] / 24, 2), _h(x["tidal"]), _h(x["restriction"]),
                      _h(x["weather"]), _h(x["total"])]
-        vals.append(_h(sum(sum(h) for h in r["cycle_hours"]) / len(r["cycle_hours"])))
+        vals += [round(r.get("factor", 1.0), 4), _h(sum(sum(h) for h in r["cycle_hours"]) / len(r["cycle_hours"]))]
         rows.append(vals)
     fmts = {1: DT}
     for k in range(len(cols)):
         base = 2 + 6 * k
         fmts.update({base: DT, base + 1: "0.00", base + 2: HOURS, base + 3: HOURS, base + 4: HOURS, base + 5: HOURS})
+    fmts[len(head) - 2] = "0.000"
     fmts[len(head) - 1] = HOURS
-    _table(runs_ws, head, rows, formats=fmts, widths=[6, 17] + [17, 12, 10, 12, 11, 12] * len(cols) + [14])
+    _table(runs_ws, head, rows, formats=fmts, widths=[6, 17] + [17, 12, 10, 12, 11, 12] * len(cols) + [12, 14])
 
     _activities(wb.create_sheet("P50 activities"), sim.p50_plan)
     _cycles(wb.create_sheet("P50 cycles"), sim.p50_plan)

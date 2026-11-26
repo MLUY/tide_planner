@@ -211,9 +211,15 @@ class Parametrization(vkt.Parametrization):
     input.lb_sim = vkt.LineBreak()
     input.sim_title = vkt.Text("### Simulation\nAll results are based on a simulation: every run draws the phase "
                                "durations of every cycle within the - % / + % of the cycle table. The views show "
-                               "the most likely planning (P50 run) and the spread (P10 / P50 / P90).")
-    input.sim_runs = vkt.IntegerField("Number of runs", default=300, min=10, max=2000, flex=50,
+                               "the most likely planning (P50 run) and the spread (P10 / P50 / P90).\n\n"
+                               "*Systematic variance: one factor per run that makes all cycles of that run faster "
+                               "or slower (e.g. a slower campaign), on top of the variance per phase.*")
+    input.sim_runs = vkt.IntegerField("Number of runs", default=300, min=10, max=2000, flex=34,
                                       description="300 runs take about 1-5 s; P90 is more stable from ~500.")
+    input.sys_minus = vkt.NumberField("Systematic variance - %", suffix="%", default=5, min=0, max=99, flex=33,
+                                      description="Whole campaign up to x % faster than the cycle durations.")
+    input.sys_plus = vkt.NumberField("Systematic variance + %", suffix="%", default=10, min=0, flex=33,
+                                     description="Whole campaign up to y % slower than the cycle durations.")
     # 'Simulate' raises this hidden counter: VIKTOR recalculates and redraws all views when an input changes
     input.refresh_counter = vkt.HiddenField("Refresh counter")
     input.simulate = vkt.SetParamsButton("Simulate", method="refresh_views", longpoll=False,
@@ -581,7 +587,8 @@ def _simulation(params):
     try:
         sim = simulate(start=plan.start, phases=phases, minus_pct=minus, plus_pct=plus, tide=plan.tide,
                        rule=plan.rule, entry_rule=plan.entry_rule, n_cycles=plan.cycles,
-                       restrictions=plan.restrictions, weather=norm, n_runs=int(params.sim_runs or 300), seed=1)
+                       restrictions=plan.restrictions, weather=norm, n_runs=int(params.sim_runs or 300), seed=1,
+                       sys_minus_pct=float(params.get("sys_minus") or 0), sys_plus_pct=float(params.get("sys_plus") or 0))
     except PlanningError as exc:
         raise vkt.UserError(str(exc))
     if len(_SIM_CACHE) > 5:
@@ -592,15 +599,17 @@ def _simulation(params):
 
 def _no_variance(params) -> bool:
     """True when no phase has a - % / + % variance (e.g. a scenario saved before these columns existed)."""
-    return not any(float(r.var_minus or 0) > 0 or float(r.var_plus or 0) > 0 for r in _cycle_rows(params))
+    return (not any(float(r.var_minus or 0) > 0 or float(r.var_plus or 0) > 0 for r in _cycle_rows(params))
+            and not (float(params.get("sys_minus") or 0) > 0 or float(params.get("sys_plus") or 0) > 0))
 
 
-NO_VARIANCE_NOTE = ("<span style='color:#d62728'>No variance in the cycle table (- % / + % empty): all runs are "
-                    "identical - fill in the variance on the tab Input.</span>")
+NO_VARIANCE_NOTE = ("<span style='color:#d62728'>No variance (cycle table - % / + % and systematic variance "
+                    "empty): all runs are identical - fill in the variance on the tab Input.</span>")
 
 
 def _sim_note(sim, params) -> str:
-    return f"{sim.n_runs} runs"
+    sm, sp = float(params.get("sys_minus") or 0), float(params.get("sys_plus") or 0)
+    return f"{sim.n_runs} runs" + (f", systematic variance -{sm:g} / +{sp:g} %" if sm or sp else "")
 
 
 def _sim_duration(params, sim=None):
@@ -628,12 +637,14 @@ def build_sim_gantt(sim, params) -> go.Figure:
 def _solid_buckets(values: np.ndarray, max_bins: int = 15, min_bins: int = 4,
                    min_share: float = 0.02) -> tuple[float, float]:
     """(bucket size, first edge) for a solid histogram: the smallest 'nice' bucket size (1 / 2 / 2.5 / 5 x 10^k)
-    for which every bucket inside the distribution (all but the outer two) holds at least min_share of the
-    runs - so no empty or almost empty buckets - with at most max_bins and, if possible, at least min_bins."""
+    with no empty bucket anywhere in the distribution and at least min_share of the runs in every bucket of the
+    core (between P1 and P99; single outliers in the tails do not force coarser buckets), with at most
+    max_bins buckets and, if possible, at least min_bins."""
     lo_v, hi_v = float(values.min()), float(values.max())
     span = hi_v - lo_v
     if span < 1e-6:                                   # all runs identical: one bucket
         return 0.1, math.floor(lo_v / 0.1) * 0.1
+    p1, p99 = np.percentile(values, 1), np.percentile(values, 99)
     sizes = sorted({m * 10 ** k for k in range(-3, 4) for m in (1, 2, 2.5, 5)})
     need = max(1, math.ceil(min_share * len(values)))
     last = None
@@ -641,9 +652,15 @@ def _solid_buckets(values: np.ndarray, max_bins: int = 15, min_bins: int = 4,
         if span / sz > max_bins:
             continue
         lo = math.floor(lo_v / sz) * sz
-        counts, _ = np.histogram(values, bins=np.arange(lo, hi_v + sz * 1.0001, sz))
+        edges = np.arange(lo, hi_v + sz * 1.0001, sz)
+        counts, _ = np.histogram(values, bins=edges)
         last = (sz, lo)
-        if len(counts) <= min_bins or (counts[1:-1] >= need).all():
+        if len(counts) <= min_bins:
+            return last
+        first = int(np.searchsorted(edges, p1, side="right") - 1)       # bucket holding P1
+        final = int(np.searchsorted(edges, p99, side="right") - 1)      # bucket holding P99
+        core = counts[first + 1:final]                                  # buckets strictly inside the core
+        if (counts > 0).all() and (core >= need).all():
             return last
     return last
 
@@ -715,6 +732,8 @@ def _export_inputs(params) -> dict:
                  ("Vessel draft loaded (departure)", _draft(params), "m"),
                  ("Vessel draft empty (entry)", _draft(params, empty=True), "m"),
                  ("Simulation runs (most likely run shown)", int(params.sim_runs or 300), ""),
+                 ("Systematic variance - (per run)", float(params.get("sys_minus") or 0), "%"),
+                 ("Systematic variance + (per run)", float(params.get("sys_plus") or 0), "%"),
                  ("Keel clearance", float(params.keel_clearance or 0), "m"),
                  ("Tidal entrance channel (from - to)", params.channel_from_to or "", ""),
                  ("Channel length (approx.)", float(params.channel_length or 0), "km"),

@@ -65,8 +65,12 @@ def _stats(values: np.ndarray) -> dict:
 
 def simulate(*, start: datetime, phases: list[Phase], minus_pct: list[float], plus_pct: list[float], tide,
              rule, n_cycles: int, restrictions=None, weather=None, n_runs: int = 300, seed: int = 1,
-             start_days: int = 0, entry_rule=None) -> SimulationResult:
-    """Run the planning n_runs times with drawn durations (and optionally a drawn start moment)."""
+             start_days: int = 0, entry_rule=None, sys_minus_pct: float = 0.0,
+             sys_plus_pct: float = 0.0) -> SimulationResult:
+    """Run the planning n_runs times with drawn durations (and optionally a drawn start moment).
+    sys_minus_pct / sys_plus_pct: systematic variance - one factor per run (triangular: 1 - x % ... 1 + y %,
+    most likely 1) that multiplies all phase durations of all cycles of that run, on top of the
+    independent variance per phase. It models a whole campaign running faster or slower than planned."""
     if n_runs < 1:
         raise PlanningError("The number of simulation runs must be at least 1.")
     for ph, m, p in zip(phases, minus_pct, plus_pct):
@@ -74,17 +78,24 @@ def simulate(*, start: datetime, phases: list[Phase], minus_pct: list[float], pl
             raise PlanningError(f"Phase '{ph.name}': the variance percentages cannot be negative.")
         if m >= 100:
             raise PlanningError(f"Phase '{ph.name}': the minus variance must be less than 100 %.")
+    if sys_minus_pct < 0 or sys_plus_pct < 0:
+        raise PlanningError("The systematic variance percentages cannot be negative.")
+    if sys_minus_pct >= 100:
+        raise PlanningError("The systematic minus variance must be less than 100 %.")
     rng = np.random.default_rng(int(seed))
     # one planning per run: gross (incl. weather downtime) when a weather norm is given, otherwise without
     basis = "gross" if weather is not None else "nett"
     runs = []
     for _ in range(n_runs):
-        hours = draw_cycle_hours(rng, phases, minus_pct, plus_pct, n_cycles).tolist()
+        hours = draw_cycle_hours(rng, phases, minus_pct, plus_pct, n_cycles)
+        lo, hi = 1 - sys_minus_pct / 100, 1 + sys_plus_pct / 100
+        factor = float(rng.triangular(lo, 1.0, hi)) if hi - lo > 1e-12 else 1.0
+        hours = (np.round(hours * factor * 60) / 60).tolist()       # whole minutes
         shift_h = int(rng.integers(-24 * start_days, 24 * start_days + 1)) if start_days > 0 else 0
         run_start = start + timedelta(hours=shift_h)
         res = plan_installation(start=run_start, phases=phases, tide=tide, rule=rule, n_cycles=n_cycles,
                                 restrictions=restrictions, cycle_hours=hours, entry_rule=entry_rule, weather=weather)
-        runs.append({"start": run_start, "cycle_hours": hours, basis: _summary(res)})
+        runs.append({"start": run_start, "cycle_hours": hours, "factor": factor, basis: _summary(res)})
 
     stats = {basis: {m: _stats(np.array([r[basis][m] for r in runs])) for m in METRICS}}
     # finish dates as hours since a fixed naive reference (independent of the computer's time zone)
