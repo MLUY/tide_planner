@@ -93,3 +93,18 @@ start time. The view shows the share of start moments per bucket (most common bu
 automatic or set), the cumulative %, average, P50, P90 and the planned start, and for the hourly run a map
 per start date and start hour. Because it runs hundreds of plannings, the view runs with the button
 *Run simulation*.
+
+## Duration variance simulation (Monte Carlo)
+Cycle table (tab *Input*): per phase a **- %** and **+ %** variance (defaults: loading, sailing -10/+20 %,
+installation -10/+25 %). Tab *Variance*: number of runs (default 300), random seed, and optionally a random
+start moment within the ± days.
+
+Every run draws a duration for every phase of every cycle (triangular: nominal - x % ... nominal + y %,
+most likely nominal) and plans the nett and - with weather downtime - the gross planning with the same
+draws. Views (button *Run simulation*):
+- **Simulation - P50 planning**: the run whose project duration is the median, as a Gantt, with the
+  P10 / P50 / P90 finish dates.
+- **Simulation - results**: P10 / P50 / P90 / average of tidal, time restriction, weather and total delay,
+  project duration and finish date for nett and gross, plus the distribution of the project duration.
+Tab *Download*: **Download simulation (Excel)** with the settings, statistics, every run and the P50
+planning. The normal planning views keep using the nominal durations.

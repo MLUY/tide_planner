@@ -302,3 +302,78 @@ def build_excel(res: PlanResult, inputs: dict | None = None, duration=None) -> b
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def build_simulation_excel(sim, inputs: dict | None = None, cycle_rows=None, note: str = "") -> bytes:
+    """Simulation workbook: settings and P10/P50/P90 statistics, every run, and the P50 planning."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Simulation summary"
+    ws["A1"] = "Duration variance simulation (Monte Carlo)"
+    ws["A1"].font = TITLE_FONT
+    ws["A2"] = note
+    row = 4
+    ws.cell(row=row, column=1, value="Phase variance (triangular: nominal - x % ... nominal + y %)").font = SECTION_FONT
+    row += 1
+    _header(ws, row, ["Phase", "Type", "Nominal (h)", "- %", "+ %", "Minimum (h)", "Maximum (h)"])
+    for r in (cycle_rows or []):
+        row += 1
+        h, m, p = float(r.hours or 0), float(r.var_minus or 0), float(r.var_plus or 0)
+        for col, v in enumerate([r.phase, r.type, h, m, p, round(h * (1 - m / 100), 2), round(h * (1 + p / 100), 2)], 1):
+            ws.cell(row=row, column=col, value=v)
+    row += 2
+    names = {"nett": "Nett (excl. weather)", "gross": "Gross (incl. weather)"}
+    cols = ["nett", "gross"] if sim.basis == "gross" else ["nett"]
+    for c in cols:
+        ws.cell(row=row, column=1, value=names[c]).font = SECTION_FONT
+        row += 1
+        _header(ws, row, ["Result", "P10", "P50", "P90", "Average", "Minimum", "Maximum"])
+        for label, m, div in (("Tidal delay (h)", "tidal", 1), ("Time restriction delay (h)", "restriction", 1),
+                              ("Weather downtime (h)", "weather", 1), ("Total delay (h)", "total", 1),
+                              ("Project duration (days)", "duration", 24)):
+            row += 1
+            st = sim.stats[c][m]
+            ws.cell(row=row, column=1, value=label)
+            for col, k in enumerate(("p10", "p50", "p90", "mean", "min", "max"), 2):
+                cell = ws.cell(row=row, column=col, value=round(st[k] / div, 2))
+                cell.number_format = "0.0"
+        row += 1
+        ws.cell(row=row, column=1, value="Finish date")
+        for col, k in enumerate(("p10", "p50", "p90"), 2):
+            cell = ws.cell(row=row, column=col, value=sim.finish[c][k])
+            cell.number_format = DT
+        row += 2
+    ws.cell(row=row, column=1, value=f"P50 planning = run {sim.p50_index + 1} of {sim.n_runs} "
+                                     f"(sheets 'P50 activities' and 'P50 cycles')")
+    ws.column_dimensions["A"].width = 30
+    for L in "BCDEFG":
+        ws.column_dimensions[L].width = 17
+
+    # every run
+    runs_ws = wb.create_sheet("Runs")
+    head = ["Run", "Start"]
+    for c in cols:
+        head += [f"{names[c]}: finish", "duration (days)", "tidal (h)", "time restriction (h)", "weather (h)",
+                 "total delay (h)"]
+    head += ["Average cycle work (h)"]
+    rows = []
+    for i, r in enumerate(sim.runs, 1):
+        vals = [i, r["start"]]
+        for c in cols:
+            x = r[c]
+            vals += [x["finish"], round(x["duration"] / 24, 2), _h(x["tidal"]), _h(x["restriction"]),
+                     _h(x["weather"]), _h(x["total"])]
+        vals.append(_h(sum(sum(h) for h in r["cycle_hours"]) / len(r["cycle_hours"])))
+        rows.append(vals)
+    fmts = {1: DT}
+    for k in range(len(cols)):
+        base = 2 + 6 * k
+        fmts.update({base: DT, base + 1: "0.00", base + 2: HOURS, base + 3: HOURS, base + 4: HOURS, base + 5: HOURS})
+    fmts[len(head) - 1] = HOURS
+    _table(runs_ws, head, rows, formats=fmts, widths=[6, 17] + [17, 12, 10, 12, 11, 12] * len(cols) + [14])
+
+    _activities(wb.create_sheet("P50 activities"), sim.p50_plan)
+    _cycles(wb.create_sheet("P50 cycles"), sim.p50_plan)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()

@@ -13,7 +13,8 @@ import viktor as vkt
 
 from .downtime import (DEFAULT_NORM, MONTHS, DowntimeError, Norm, default_month_rows, project_duration,
                        validate_norm)
-from .export import build_excel
+from .export import build_excel, build_simulation_excel
+from .simulation import simulate
 from .planning import (DEFAULT_CYCLE, PHASE_TYPES, GateRule, Phase, PlanningError, TimeRestriction,
                        load_tide, plan_installation)
 
@@ -21,6 +22,11 @@ COLORS = {"Port": "#8c564b", "Sailing": "#1f77b4", "Installation": "#2ca02c", "T
           "Time restriction wait": "#e377c2", "Weather downtime": "#17becf"}
 WAIT_CATEGORIES = ("Tidal wait", "Time restriction wait", "Weather downtime")
 RESTRICT_NO, RESTRICT_YES = "No", "Yes"
+# default cycle with variance for the simulation: - % / + % per phase (triangular distribution)
+DEFAULT_VARIANCE = {"Loading": (10, 20), "Sail to site": (10, 20), "Installation": (10, 25),
+                    "Sail to loading port": (10, 20)}
+DEFAULT_CYCLE_ROWS = [dict(d, var_minus=DEFAULT_VARIANCE.get(d["phase"], (10, 20))[0],
+                           var_plus=DEFAULT_VARIANCE.get(d["phase"], (10, 20))[1]) for d in DEFAULT_CYCLE]
 # start date sensitivity: what is analysed per start date (label -> function of a planning result, in hours)
 SENS_HOURLY, SENS_DAILY = "Every hour (24 per day)", "Once a day (planned start time)"
 SENS_STEPS = {SENS_HOURLY: 1, SENS_DAILY: 24}      # hours between start moments
@@ -63,14 +69,22 @@ def _tide_bytes(params) -> bytes:
     return params.tide_file.file.getvalue_binary() if params.tide_file else DEFAULT_TIDE.read_bytes()
 
 
+def _cycle_rows(params):
+    return [r for r in (params.cycle or []) if r.type or r.phase or r.hours]
+
+
+def _phases(params):
+    return [Phase(name=r.phase or f"Phase {i + 1}", type=r.type, hours=float(r.hours or 0))
+            for i, r in enumerate(_cycle_rows(params))]
+
+
 def _run_plan(params, weather=None, tide=None, shift_days=0):
     """Planning for flat params; tide: already loaded TideCurve (loaded from the inputs when None);
     shift_days: start date shifted by this number of days (start date sensitivity)."""
     if not params.start_date:
         raise vkt.UserError("Please fill in the start date.")
 
-    phases = [Phase(name=r.phase or f"Phase {i + 1}", type=r.type, hours=float(r.hours or 0))
-              for i, r in enumerate(params.cycle) if r.type or r.phase or r.hours]
+    phases = _phases(params)
     rising, falling = _required_tide(params)
     rule = GateRule(rising_cm=rising, falling_cm=falling, transit_h=float(params.transit_h or 0))
     restrictions = [TimeRestriction(description=(r.description or "").strip(),
@@ -178,10 +192,15 @@ class Parametrization(vkt.Parametrization):
     input.lb2 = vkt.LineBreak()
     input.cycle_text = vkt.Text("### (Nett) cycle\nThe port is left at the start of *Sail to site* "
                                 "and entered at the end of *Sail to port*.")
-    input.cycle = vkt.Table("Cycle phases", default=DEFAULT_CYCLE)
+    input.cycle_variance_text = vkt.Text("*- % / + %: variance on the duration for the simulation (tab "
+                                         "Variance): the duration varies between nominal - x % and nominal + y %, "
+                                         "most likely the nominal value. Not used in the normal planning views.*")
+    input.cycle = vkt.Table("Cycle phases", default=DEFAULT_CYCLE_ROWS)
     input.cycle.phase = vkt.TextField("Phase")
     input.cycle.type = vkt.OptionField("Type", options=PHASE_TYPES)
     input.cycle.hours = vkt.NumberField("Duration", suffix="hr")   # no min/max: not supported in a table
+    input.cycle.var_minus = vkt.NumberField("- %", suffix="%")
+    input.cycle.var_plus = vkt.NumberField("+ %", suffix="%")
 
     input.lb3 = vkt.LineBreak()
     input.channel_text = vkt.Text("### Tidal entrance channel")
@@ -254,6 +273,19 @@ class Parametrization(vkt.Parametrization):
                                            default="Tidal delay", flex=50)
     variance.sens_bucket = vkt.NumberField("Bucket size (0 = automatic)", default=0, min=0, flex=50,
                                            description="In hours; in days for the total project duration.")
+    variance.lb_sim = vkt.LineBreak()
+    variance.sim_title = vkt.Text("### Duration variance simulation (Monte Carlo)")
+    variance.sim_text = vkt.Text(
+        "Every run draws a new duration for every phase of every cycle (triangular: nominal - x % ... "
+        "nominal + y %, set per phase in the cycle table on the tab *Input*) and plans the nett and - with "
+        "weather downtime - the gross planning with the same draws. The views *Simulation - P50 planning* and "
+        "*Simulation - results* show the P50 run as a Gantt and the distribution (P10 / P50 / P90).")
+    variance.sim_runs = vkt.IntegerField("Number of runs", default=300, min=10, max=2000, flex=33,
+                                         description="300 runs take a few seconds; P90 is more stable from ~500.")
+    variance.sim_seed = vkt.IntegerField("Random seed", default=1, min=0, flex=33,
+                                         description="Same seed + same inputs = same result.")
+    variance.sim_random_start = vkt.OptionField("Also vary the start moment (± days above)?",
+                                                options=[RESTRICT_NO, RESTRICT_YES], default=RESTRICT_NO, flex=33)
     variance.lb_refresh = vkt.LineBreak()
     variance.refresh_views_variance = vkt.SetParamsButton("Refresh views", method="refresh_views", longpoll=False,
                                      description="Recalculate the planning and redraw all views.")
@@ -291,6 +323,9 @@ class Parametrization(vkt.Parametrization):
     download.download_excel = vkt.DownloadButton("Download planning (Excel)", method="download_excel",
                                                  description="All activities (from - to, type of delay), cycles, "
                                                              "departures/entries and tidal data in one Excel file.")
+    download.download_simulation = vkt.DownloadButton(
+        "Download simulation (Excel)", method="download_simulation", longpoll=True,
+        description="Simulation settings, P10/P50/P90 statistics, every run and the P50 planning in one file.")
     download.lb_refresh = vkt.LineBreak()
     download.refresh_views_download = vkt.SetParamsButton("Refresh views", method="refresh_views", longpoll=False,
                                      description="Recalculate the planning and redraw all views.")
@@ -670,6 +705,105 @@ def build_sensitivity(sens, bucket=0.0) -> go.Figure:
     return fig
 
 
+_SIM_CACHE: dict = {}
+
+
+def _simulation(params):
+    """Monte Carlo simulation for flat params (cached per set of inputs)."""
+    key = _inputs_revision(params)
+    if key in _SIM_CACHE:
+        return _SIM_CACHE[key]
+    nett, gross, norm = _plans(params)                       # validates the inputs
+    rows = _cycle_rows(params)
+    phases = _phases(params)
+    minus = [float(r.var_minus or 0) for r in rows]
+    plus = [float(r.var_plus or 0) for r in rows]
+    try:
+        sim = simulate(start=nett.start, phases=phases, minus_pct=minus, plus_pct=plus, tide=nett.tide,
+                       rule=nett.rule, n_cycles=nett.cycles, restrictions=nett.restrictions, weather=norm,
+                       n_runs=int(params.sim_runs or 300), seed=int(params.sim_seed or 0),
+                       start_days=int(round(float(params.sens_days or 0)))
+                       if params.sim_random_start == RESTRICT_YES else 0)
+    except PlanningError as exc:
+        raise vkt.UserError(str(exc))
+    if len(_SIM_CACHE) > 5:
+        _SIM_CACHE.clear()
+    _SIM_CACHE[key] = sim
+    return sim
+
+
+def _sim_note(sim, params) -> str:
+    start = (f", start ± {int(round(float(params.sens_days or 0)))} days"
+             if params.sim_random_start == RESTRICT_YES else "")
+    return f"{sim.n_runs} runs, seed {sim.seed}{start}"
+
+
+def build_sim_gantt(sim, params) -> go.Figure:
+    """The P50 run as a Gantt; title adds the simulation and the P10-P90 finish."""
+    fig = build_gantt(sim.p50_plan, (params.vessel_name or "").strip())
+    f = sim.finish[sim.basis]
+    lines = fig.layout.title.text.split("<br>")
+    lines[0] = f"Simulation P50 run ({sim.p50_index + 1} of {sim.n_runs}) - " + lines[0]
+    lines.insert(2, f"Finish P10 {f['p10'].day} {f['p10']:%B %Y} | P50 {f['p50'].day} {f['p50']:%B %Y} | "
+                    f"P90 {f['p90'].day} {f['p90']:%B %Y} ({_sim_note(sim, params)})")
+    fig.update_layout(title="<br>".join(lines), height=600, margin=dict(l=220, t=160))
+    return fig
+
+
+def build_sim_results(sim, params) -> go.Figure:
+    weather = sim.basis == "gross"
+    cols = ["nett", "gross"] if weather else ["nett"]
+    names = {"nett": "Nett (excl. weather)", "gross": "Gross (incl. weather)"}
+    rows = [("Tidal delay (h)", "tidal", 1), ("Time restriction delay (h)", "restriction", 1),
+            ("Weather downtime (h)", "weather", 1), ("Total delay (h)", "total", 1),
+            ("Project duration (days)", "duration", 24)]
+    header = ["<b>Result</b>"] + [f"<b>{names[c]}</b><br>P10 / P50 / P90 / average" for c in cols]
+    cells = [[r[0] for r in rows] + ["Finish date"]]
+    for c in cols:
+        col = []
+        for _, m, div in rows:
+            st = sim.stats[c][m]
+            col.append(f"{st['p10'] / div:,.1f} / <b>{st['p50'] / div:,.1f}</b> / {st['p90'] / div:,.1f} / "
+                       f"{st['mean'] / div:,.1f}")
+        f = sim.finish[c]
+        col.append(f"{f['p10']:%d %b} / <b>{f['p50']:%d %b %Y}</b> / {f['p90']:%d %b %Y}")
+        cells.append(col)
+    fill = [["#EEF3F9" if i % 2 else "white" for i in range(len(rows) + 1)]] * len(cells)
+
+    fig = make_subplots(rows=2, cols=1, row_heights=[0.36, 0.64], vertical_spacing=0.1,
+                        specs=[[{"type": "table"}], [{"secondary_y": True}]])
+    fig.add_trace(go.Table(columnwidth=[2] + [3] * len(cols),
+                           header=dict(values=header, align="left", fill_color="#C8D4E3", height=36),
+                           cells=dict(values=cells, align="left", height=24, fill_color=fill)), row=1, col=1)
+    colors = {"nett": "#1f77b4", "gross": COLORS["Weather downtime"]}
+    for c in cols:
+        days = np.array([r[c]["duration"] for r in sim.runs]) / 24
+        fig.add_trace(go.Histogram(x=days.tolist(), name=f"{names[c]} - runs", marker_color=colors[c], opacity=0.65,
+                                   nbinsx=30, hovertemplate="%{x} days: %{y} runs<extra></extra>"),
+                      row=2, col=1, secondary_y=False)
+        xs = np.sort(days)
+        fig.add_trace(go.Scatter(x=xs.tolist(), y=(np.arange(1, len(xs) + 1) / len(xs) * 100).tolist(),
+                                 mode="lines", name=f"{names[c]} - cumulative %", line=dict(color=colors[c], width=2),
+                                 hovertemplate="≤ %{x:.1f} days: %{y:.0f} %<extra></extra>"),
+                      row=2, col=1, secondary_y=True)
+        st = sim.stats[c]["duration"]
+        for q, dash in (("p50", "dash"), ("p90", "solid")):
+            # drawn as a plain shape on the histogram axis (add_vline fails in a figure with a table)
+            fig.add_shape(type="line", xref="x", yref="y domain", x0=st[q] / 24, x1=st[q] / 24, y0=0, y1=1,
+                          line=dict(color=colors[c], dash=dash, width=1.5))
+    fig.update_xaxes(title_text="Project duration (days) - P50 dashed, P90 solid", row=2, col=1)
+    fig.update_yaxes(title_text="Number of runs", rangemode="tozero", row=2, col=1, secondary_y=False)
+    fig.update_yaxes(title_text="cumulative %", range=[0, 105], tickvals=[0, 25, 50, 75, 100], showgrid=False,
+                     row=2, col=1, secondary_y=True)
+    fig.update_layout(barmode="overlay", height=760, margin=dict(t=90, b=40, l=60, r=20),
+                      legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.08, yanchor="top"),
+                      title=(f"Simulation results - variance on the phase durations ({_sim_note(sim, params)})<br>"
+                             f"<sup>P50 = half of the runs finish earlier, P90 = 90 % of the runs finish earlier. "
+                             f"{'Nett and gross use the same drawn durations.' if weather else 'Weather downtime off: nett only.'}"
+                             f"</sup>"))
+    return fig
+
+
 def _export_inputs(params) -> dict:
     return dict(
         general=[("Vessel", (params.vessel_name or "").strip(), ""),
@@ -706,6 +840,13 @@ class Scenario(vkt.Controller):
         name = f"tide_planning_{res.start:%Y%m%d}_{res.cycles}cycles_{kind}.xlsx"
         return vkt.DownloadResult(build_excel(res, _export_inputs(params), _duration(params)), name)
 
+    def download_simulation(self, params, **kwargs):
+        params = _flat(params)
+        sim = _simulation(params)
+        name = f"tide_simulation_{sim.p50_plan.start:%Y%m%d}_{sim.p50_plan.cycles}cycles_{sim.n_runs}runs.xlsx"
+        return vkt.DownloadResult(build_simulation_excel(sim, _export_inputs(params), _cycle_rows(params),
+                                                         _sim_note(sim, params)), name)
+
     @vkt.PlotlyView("Planning (Gantt)", duration_guess=2)
     def gantt_view(self, params, **kwargs):
         params = _flat(params)
@@ -734,6 +875,16 @@ class Scenario(vkt.Controller):
     def sensitivity_view(self, params, **kwargs):
         params = _flat(params)
         return _result(build_sensitivity(_sensitivity(params), float(params.sens_bucket or 0)), params)
+
+    @vkt.PlotlyView("Simulation - P50 planning", duration_guess=10, update_label="Run simulation")
+    def sim_gantt_view(self, params, **kwargs):
+        params = _flat(params)
+        return _result(build_sim_gantt(_simulation(params), params), params)
+
+    @vkt.PlotlyView("Simulation - results", duration_guess=10, update_label="Run simulation")
+    def sim_results_view(self, params, **kwargs):
+        params = _flat(params)
+        return _result(build_sim_results(_simulation(params), params), params)
 
     @vkt.PlotlyView("Project duration", duration_guess=2)
     def duration_view(self, params, **kwargs):
