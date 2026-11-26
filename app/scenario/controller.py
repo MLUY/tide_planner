@@ -353,7 +353,7 @@ def build_gantt(res, vessel: str = "", note: str = "") -> go.Figure:
     fig.update_layout(
         title=(f"{_basis_text(res)} | {vessel + ' | ' if vessel else ''}{res.cycles} cycles | "
                f"nominal cycle {res.nominal_cycle_h:.0f} h<br>"
-               f"Start {res.start:%Y-%m-%d %H:%M} | End {res.finish:%Y-%m-%d %H:%M}<br>"
+               f"Start {res.start.day} {res.start:%B %Y} | End {res.finish.day} {res.finish:%B %Y}<br>"
                f"{delay}"),
         height=560, margin=dict(l=220, t=135), legend_title_text="")
     return fig
