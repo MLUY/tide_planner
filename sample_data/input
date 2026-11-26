@@ -1,0 +1,25 @@
+input data to check results
+
+vessel draft loaded 8.5
+vessel draft empty 9
+keel clearance 2
+
+start date 2028-07-30
+dtart time 0
+number of cycles 13
+
+
+cycle phases as per below
+
+phase, type, duration variance -, variance +
+Loading	In port	12	5	5
+Sail to site	Sail to site	13	5	5
+Installation	At site	52	5	5
+Sail to loading port	Sail to port	12	5	5
+
+channel dredged depth 7.4
+transit time 0.5
+
+rising ride margin 0
+falling tide margin 40
+
