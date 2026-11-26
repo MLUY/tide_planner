@@ -89,9 +89,9 @@ or keep missing the tidal windows ('lucky' / 'unlucky'). Therefore every result 
 - Every run draws a duration for every phase of every cycle (triangular: nominal - x % ... nominal + y %,
   most likely nominal) and plans the installation incl. weather downtime. Number of runs at the bottom of
   the tab *Input* (default 300), button *Simulate*.
-- **Systematic variance** (Simulation section, default -5 / +10 %): one factor per run (triangular, most likely
+- **Campaign variance - % / + % (whole run)** (Simulation section, default -5 / +10 %): one factor per run (triangular, most likely
   1.0) multiplies all phase durations of all cycles of that run - a whole campaign running faster or slower.
-  Independent variances per phase average out over many cycles; the systematic variance gives the realistic
+  Independent variances per phase average out over many cycles; the campaign variance gives the realistic
   P10 - P90 spread.
 - The **most likely planning** is the run closest to the median in both project duration and tidal delay.
 - The histogram bucket size is chosen automatically for a solid distribution: no empty buckets and at least

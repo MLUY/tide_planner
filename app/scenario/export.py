@@ -343,7 +343,7 @@ def build_simulation_excel(sim, inputs: dict | None = None, cycle_rows=None, not
     for c in cols:
         head += [f"{names[c]}: finish", "duration (days)", "tidal (h)", "time restriction (h)", "weather (h)",
                  "total delay (h)"]
-    head += ["Systematic factor", "Average cycle work (h)"]
+    head += ["Campaign factor", "Average cycle work (h)"]
     rows = []
     for i, r in enumerate(sim.runs, 1):
         vals = [i, r["start"]]

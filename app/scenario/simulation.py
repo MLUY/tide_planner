@@ -68,7 +68,7 @@ def simulate(*, start: datetime, phases: list[Phase], minus_pct: list[float], pl
              start_days: int = 0, entry_rule=None, sys_minus_pct: float = 0.0,
              sys_plus_pct: float = 0.0) -> SimulationResult:
     """Run the planning n_runs times with drawn durations (and optionally a drawn start moment).
-    sys_minus_pct / sys_plus_pct: systematic variance - one factor per run (triangular: 1 - x % ... 1 + y %,
+    sys_minus_pct / sys_plus_pct: campaign variance - one factor per run (triangular: 1 - x % ... 1 + y %,
     most likely 1) that multiplies all phase durations of all cycles of that run, on top of the
     independent variance per phase. It models a whole campaign running faster or slower than planned."""
     if n_runs < 1:
@@ -79,9 +79,9 @@ def simulate(*, start: datetime, phases: list[Phase], minus_pct: list[float], pl
         if m >= 100:
             raise PlanningError(f"Phase '{ph.name}': the minus variance must be less than 100 %.")
     if sys_minus_pct < 0 or sys_plus_pct < 0:
-        raise PlanningError("The systematic variance percentages cannot be negative.")
+        raise PlanningError("The campaign variance percentages cannot be negative.")
     if sys_minus_pct >= 100:
-        raise PlanningError("The systematic minus variance must be less than 100 %.")
+        raise PlanningError("The campaign minus variance must be less than 100 %.")
     rng = np.random.default_rng(int(seed))
     # one planning per run: gross (incl. weather downtime) when a weather norm is given, otherwise without
     basis = "gross" if weather is not None else "nett"

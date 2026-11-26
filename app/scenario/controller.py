@@ -212,13 +212,14 @@ class Parametrization(vkt.Parametrization):
     input.sim_title = vkt.Text("### Simulation\nAll results are based on a simulation: every run draws the phase "
                                "durations of every cycle within the - % / + % of the cycle table. The views show "
                                "the most likely planning (P50 run) and the spread (P10 / P50 / P90).\n\n"
-                               "*Systematic variance: one factor per run that makes all cycles of that run faster "
-                               "or slower (e.g. a slower campaign), on top of the variance per phase.*")
+                               "*Cycle table - % / + %: random variation per phase in every cycle. "
+                               "Campaign variance: one factor per run that makes the whole campaign faster "
+                               "or slower.*")
     input.sim_runs = vkt.IntegerField("Number of runs", default=300, min=10, max=2000, flex=34,
                                       description="300 runs take about 1-5 s; P90 is more stable from ~500.")
-    input.sys_minus = vkt.NumberField("Systematic variance - %", suffix="%", default=5, min=0, max=99, flex=33,
+    input.sys_minus = vkt.NumberField("Campaign variance - % (whole run)", suffix="%", default=5, min=0, max=99, flex=33,
                                       description="Whole campaign up to x % faster than the cycle durations.")
-    input.sys_plus = vkt.NumberField("Systematic variance + %", suffix="%", default=10, min=0, flex=33,
+    input.sys_plus = vkt.NumberField("Campaign variance + % (whole run)", suffix="%", default=10, min=0, flex=33,
                                      description="Whole campaign up to y % slower than the cycle durations.")
     # 'Simulate' raises this hidden counter: VIKTOR recalculates and redraws all views when an input changes
     input.refresh_counter = vkt.HiddenField("Refresh counter")
@@ -603,13 +604,13 @@ def _no_variance(params) -> bool:
             and not (float(params.get("sys_minus") or 0) > 0 or float(params.get("sys_plus") or 0) > 0))
 
 
-NO_VARIANCE_NOTE = ("<span style='color:#d62728'>No variance (cycle table - % / + % and systematic variance "
+NO_VARIANCE_NOTE = ("<span style='color:#d62728'>No variance (cycle table - % / + % and campaign variance "
                     "empty): all runs are identical - fill in the variance on the tab Input.</span>")
 
 
 def _sim_note(sim, params) -> str:
     sm, sp = float(params.get("sys_minus") or 0), float(params.get("sys_plus") or 0)
-    return f"{sim.n_runs} runs" + (f", systematic variance -{sm:g} / +{sp:g} %" if sm or sp else "")
+    return f"{sim.n_runs} runs" + (f", campaign variance -{sm:g} / +{sp:g} %" if sm or sp else "")
 
 
 def _sim_duration(params, sim=None):
@@ -732,8 +733,8 @@ def _export_inputs(params) -> dict:
                  ("Vessel draft loaded (departure)", _draft(params), "m"),
                  ("Vessel draft empty (entry)", _draft(params, empty=True), "m"),
                  ("Simulation runs (most likely run shown)", int(params.sim_runs or 300), ""),
-                 ("Systematic variance - (per run)", float(params.get("sys_minus") or 0), "%"),
-                 ("Systematic variance + (per run)", float(params.get("sys_plus") or 0), "%"),
+                 ("Campaign variance - (whole run)", float(params.get("sys_minus") or 0), "%"),
+                 ("Campaign variance + (whole run)", float(params.get("sys_plus") or 0), "%"),
                  ("Keel clearance", float(params.keel_clearance or 0), "m"),
                  ("Tidal entrance channel (from - to)", params.channel_from_to or "", ""),
                  ("Channel length (approx.)", float(params.channel_length or 0), "km"),
