@@ -74,3 +74,10 @@ Section in tab *Added features*, view **Project duration** and Excel (Summary + 
 nett and gross planning side by side: number of cycles, nominal cycle, tidal / time restriction /
 weather delays and their total, cycle (nominal + total delay / cycles), total duration (cycles x cycle),
 start and finish.
+
+## Start date sensitivity
+Section *Start date sensitivity* (tab *Added features*) and view **Start date sensitivity**:
+the planning is run for every start date within ± N days (slider 0-30, one run per day, same start time
+and planning basis). Result to analyse: tidal delay (default), tidal + time restriction delay, total delay
+incl. weather, or total project duration. The view shows the result per start date (planned start in
+orange) and a histogram with the average, P50 and P90 (P90 = exceeded by 10 % of the start dates).
