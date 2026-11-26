@@ -308,6 +308,26 @@ def build_delay_curve(res) -> go.Figure:
     return fig
 
 
+def _inputs_revision(params) -> str:
+    """Short fingerprint of all inputs (uploaded tide file by content)."""
+    data = _tide_bytes(params)
+    text = json.dumps({**{k: v for k, v in params.items() if k != "tide_file"},
+                       "tide_file": hashlib.sha1(data).hexdigest()}, default=str, sort_keys=True)
+    return hashlib.sha1(text.encode()).hexdigest()[:16]
+
+
+def _result(fig, params) -> "vkt.PlotlyResult":
+    """PlotlyResult that the browser always redraws when an input changed.
+    Plotly in the browser only redraws what it detects as changed; layout.datarevision tells it the
+    data is new (otherwise e.g. a new start time could stay invisible until a page refresh), and
+    uirevision resets zoom/pan to the new planning."""
+    fig_dict = fig if isinstance(fig, dict) else json.loads(fig.to_json())
+    rev = _inputs_revision(params)
+    fig_dict.setdefault("layout", {})["datarevision"] = rev
+    fig_dict["layout"]["uirevision"] = rev
+    return vkt.PlotlyResult(fig_dict)
+
+
 def _json_safe(value):
     return value.isoformat() if isinstance(value, datetime) else value
 
@@ -530,21 +550,24 @@ class Scenario(vkt.Controller):
     @vkt.PlotlyView("Planning (Gantt)", duration_guess=2)
     def gantt_view(self, params, **kwargs):
         params = _flat(params)
-        return vkt.PlotlyResult(json.loads(build_gantt(_view_plan(params),
-                                                       (params.vessel_name or "").strip()).to_json()))
+        return _result(build_gantt(_view_plan(params), (params.vessel_name or "").strip()), params)
 
     @vkt.PlotlyView("Tide and cycles", duration_guess=2)
     def tide_cycles_view(self, params, **kwargs):
-        return vkt.PlotlyResult(build_tide_cycles(_view_plan(_flat(params))))
+        params = _flat(params)
+        return _result(build_tide_cycles(_view_plan(params)), params)
 
     @vkt.PlotlyView("Cycle table", duration_guess=2)
     def cycle_table_view(self, params, **kwargs):
-        return vkt.PlotlyResult(json.loads(build_cycle_table(_view_plan(_flat(params))).to_json()))
+        params = _flat(params)
+        return _result(build_cycle_table(_view_plan(params)), params)
 
     @vkt.PlotlyView("Tidal delay", duration_guess=2)
     def delay_view(self, params, **kwargs):
-        return vkt.PlotlyResult(json.loads(build_delay_curve(_view_plan(_flat(params))).to_json()))
+        params = _flat(params)
+        return _result(build_delay_curve(_view_plan(params)), params)
 
     @vkt.PlotlyView("Project duration", duration_guess=2)
     def duration_view(self, params, **kwargs):
-        return vkt.PlotlyResult(json.loads(build_duration(_duration(_flat(params))).to_json()))
+        params = _flat(params)
+        return _result(build_duration(_duration(params)), params)
