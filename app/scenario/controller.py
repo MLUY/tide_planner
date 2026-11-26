@@ -332,11 +332,19 @@ def build_gantt(res, vessel: str = "") -> go.Figure:
                       color_discrete_map=COLORS, hover_data=["Cycle", "Hours", "Detail"])
     fig.update_yaxes(categoryorder="array", categoryarray=order[::-1], title_text="")
     fig.update_xaxes(rangeslider_visible=True)
+    # title on three rows: planning / start - end / delays (whole hours)
+    parts = [f"tidal {res.total_tidal_wait_h:.0f} h"]
+    if res.weather:
+        parts.append(f"weather {res.total_weather_h:.0f} h")
+    if res.restrictions:
+        parts.append(f"time restriction {res.total_restriction_wait_h:.0f} h")
+    delay = f"Total delay {res.total_wait_h:.0f} h ({', '.join(parts)})"
     fig.update_layout(
-        title=(f"{_basis_text(res)} | {vessel + ' | ' if vessel else ''}{res.cycles} cycles | nominal cycle {res.nominal_cycle_h:.0f} h | "
-               f"start {res.start:%Y-%m-%d %H:%M} | finish {res.finish:%Y-%m-%d %H:%M}<br>"
-               f"{_delay_text(res).capitalize()}"),
-        height=520, margin=dict(l=220, t=110), legend_title_text="")
+        title=(f"{_basis_text(res)} | {vessel + ' | ' if vessel else ''}{res.cycles} cycles | "
+               f"nominal cycle {res.nominal_cycle_h:.0f} h<br>"
+               f"Start {res.start:%Y-%m-%d %H:%M} | End {res.finish:%Y-%m-%d %H:%M}<br>"
+               f"{delay}"),
+        height=560, margin=dict(l=220, t=135), legend_title_text="")
     return fig
 
 
