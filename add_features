@@ -1,19 +1,7 @@
-apply vessel draft loaded and vessel draft empty and incorporate this into planning
-so entry will be with a lesser draft then departure which is now not taken into consideration
+rename title in planning tab to:
+Gross planning most likely
+Keep Start and Finish
+no further description needed, as this information should be displayed in the results tab
 
-remove the start date sensitivity tab and the variance tab removed
-remove tidal delay tab
+rename tab durations to results
 
-the analysis should now only be based on a simulation run using the variance in the cycle
-
-on the bottom of the input sheet there should be a simulation section
-first showing the number of runs as input  (default 300)
-blue button with simulate
-
-the generated charts should be based on the most likely cycle duration
-either basing it on nett (ex weather) or gross (inc weather)
-
-so results to be displayed in tabe:
-"planning", "cycle", "table", "simulation", "durations"
-
-check total tidal downtime percentages between nett and gross are similar
