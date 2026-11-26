@@ -32,12 +32,12 @@ SENS_METRICS = {
 }
 BASIS_GROSS, BASIS_NETT = "Gross (incl. weather downtime)", "Nett (excl. weather downtime)"
 DEFAULT_TIDE = Path(__file__).resolve().parents[2] / "sample_data" / "gunsan_tide_2026_hourly.csv"
-TABS = ("input", "added_features")
-SECTIONS = ("refresh", "restrictions", "weather", "workability", "duration", "sensitivity")   # collapsible sections in 'Added features'
+TABS = ("input", "weather", "variance", "constraints", "download")
+SECTIONS = ("downtime", "workability", "refresh")       # collapsible sections in the tab 'Weather'
 
 
 def _flat(params):
-    """The inputs are split over tabs and sections (params.input.x, params.added_features.weather.y);
+    """The inputs are split over tabs and sections (params.input.x, params.weather.downtime.y);
     the calculations use one flat set of inputs (params.x). Field names are unique over all of them."""
     out = Munch()
     for key, value in (params or {}).items():
@@ -88,8 +88,8 @@ def _run_plan(params, weather=None, tide=None, shift_days=0):
         raise vkt.UserError(str(exc))
 
 
-_RESTRICT_ON = vkt.IsEqual(vkt.Lookup("added_features.restrictions.use_time_restrictions"), RESTRICT_YES)
-_DOWNTIME_ON = vkt.IsEqual(vkt.Lookup("added_features.weather.use_downtime"), RESTRICT_YES)
+_RESTRICT_ON = vkt.IsEqual(vkt.Lookup("constraints.use_time_restrictions"), RESTRICT_YES)
+_DOWNTIME_ON = vkt.IsEqual(vkt.Lookup("weather.downtime.use_downtime"), RESTRICT_YES)
 _PLAN_CACHE: dict = {}
 
 
@@ -155,46 +155,33 @@ def _duration(params):
     return project_duration(nett, gross, norm)
 
 
-def _out(fn):
-    """Output field callback that shows '-' instead of an error while inputs are incomplete."""
-    def callback(params, **kwargs):
-        try:
-            return fn(_duration(_flat(params)))
-        except Exception:  # noqa: BLE001
-            return "-"
-    return callback
-
-
 def _fmt_h(h):
     return f"{h:,.1f} h ({h / 24:,.1f} days)"
 
 
 class Parametrization(vkt.Parametrization):
-    # ---------------- tab 1: planning, cycle, vessel, channel, tide ----------------
+    # ---------------- tab: input (vessel, planning, cycle, channel, tide) ----------------
     input = vkt.Tab("Input")
     input.title = vkt.Text("##  Tidal planner")
-    input.download_excel = vkt.DownloadButton("Download planning (Excel)", method="download_excel",
-                                              description="All activities (from - to, type of delay), cycles, "
-                                                          "departures/entries and tidal data in one Excel file.")
 
+    input.vessel_text = vkt.Text("### Vessel")
+    input.vessel_name = vkt.TextField("Vessel Name", default="Bokalift 2", flex=100)
+    input.draft = vkt.NumberField("Vessel draft", suffix="m", default=11.0)
+    input.keel_clearance = vkt.NumberField("Keel clearance", suffix="m", default=0.0, min=0)
+
+    input.lb1 = vkt.LineBreak()
     input.planning_text = vkt.Text("### Planning")
     input.start_date = vkt.DateField("Start date")
     input.start_hour = vkt.NumberField("Start time (hour of day)", default=0, min=0, max=23.99, suffix="h")
     input.n_cycles = vkt.IntegerField("Number of cycles", default=10, min=1)
 
-    input.lb1 = vkt.LineBreak()
+    input.lb2 = vkt.LineBreak()
     input.cycle_text = vkt.Text("### (Nett) cycle\nThe port is left at the start of *Sail to site* "
                                 "and entered at the end of *Sail to port*.")
     input.cycle = vkt.Table("Cycle phases", default=DEFAULT_CYCLE)
     input.cycle.phase = vkt.TextField("Phase")
     input.cycle.type = vkt.OptionField("Type", options=PHASE_TYPES)
     input.cycle.hours = vkt.NumberField("Duration", suffix="hr")   # no min/max: not supported in a table
-
-    input.lb2 = vkt.LineBreak()
-    input.vessel_text = vkt.Text("### Vessel")
-    input.vessel_name = vkt.TextField("Vessel Name", default="Bokalift 2", flex=100)
-    input.draft = vkt.NumberField("Vessel draft", suffix="m", default=11.0)
-    input.keel_clearance = vkt.NumberField("Keel clearance", suffix="m", default=0.0, min=0)
 
     input.lb3 = vkt.LineBreak()
     input.channel_text = vkt.Text("### Tidal entrance channel")
@@ -219,14 +206,64 @@ class Parametrization(vkt.Parametrization):
     # 'Refresh views' raises this hidden counter: VIKTOR redraws all views when an input changes
     input.refresh_counter = vkt.HiddenField("Refresh counter")
     input.refresh_views = vkt.SetParamsButton("Refresh views", method="refresh_views", longpoll=False,
-                                              description="Recalculate the planning and redraw all views.")
+                                     description="Recalculate the planning and redraw all views.")
 
-    # ---------------- tab 2: time restrictions, weather downtime, project duration ----------------
-    added_features = vkt.Tab("Added features")
-    added_features.restrictions = vkt.Section("Time restrictions - sailing in/out of port", initially_expanded=True)
-    added_features.restrictions.use_time_restrictions = vkt.OptionField(
-        "Apply time restrictions?", options=[RESTRICT_NO, RESTRICT_YES], default=RESTRICT_NO)
-    added_features.restrictions.restriction_text = vkt.Text(
+    # ---------------- tab: weather (collapsible sections, so every field is inside a section) ----------------
+    weather = vkt.Tab("Weather")
+    weather.downtime = vkt.Section("Weather downtime (SME)", initially_expanded=True)
+    weather.downtime.use_downtime = vkt.OptionField(
+        "Apply monthly downtime percentages?", options=[RESTRICT_NO, RESTRICT_YES], default=RESTRICT_NO,
+        description="Yes = gross planning (incl. weather downtime); No = nett planning (no weather downtime).")
+    weather.downtime.basis_note = vkt.Text("**No** = nett planning, **Yes** = gross planning "
+                                           "(including weather downtime) in all views and the Excel export.")
+    weather.downtime.downtime_text = vkt.Text(
+        "Workability per month from the Site Metocean Report (SME): the percentage of time in which the "
+        "operation can be performed within the MWS weather window. In the gross planning, the vessel waits "
+        "on weather at site in every cycle for (working hours of the cycle) x (100 / workability of that "
+        "month - 1). The table is in the section *Monthly workability* below (collapsible).",
+        visible=_DOWNTIME_ON)
+
+    # separate section, so the table can be collapsed while the selection above stays visible
+    weather.workability = vkt.Section("Monthly workability", initially_expanded=True, visible=_DOWNTIME_ON)
+    weather.workability.downtime_name = vkt.TextField("Norm", default=DEFAULT_NORM[0], flex=100)
+    weather.workability.downtime_mws_h = vkt.NumberField("MWS window", suffix="hr", default=DEFAULT_NORM[1],
+                                                         min=0, flex=50)
+    weather.workability.downtime_year = vkt.NumberField("Year (SME)", suffix="%", default=DEFAULT_NORM[3],
+                                                        min=0, max=100, flex=50)
+    weather.workability.downtime_months = vkt.Table("Workability per month", default=default_month_rows())
+    weather.workability.downtime_months.month = vkt.TextField("Month")
+    # no min/max on table fields (not supported by VIKTOR); 0-100 % is checked when the norm is read
+    weather.workability.downtime_months.pct = vkt.NumberField("Workability", suffix="%")
+
+    weather.refresh = vkt.Section("Refresh", initially_expanded=True)
+    weather.refresh.refresh_views_weather = vkt.SetParamsButton("Refresh views", method="refresh_views", longpoll=False,
+                                     description="Recalculate the planning and redraw all views.")
+
+    # ---------------- tab: variance (start date sensitivity) ----------------
+    variance = vkt.Tab("Variance")
+    variance.sens_title = vkt.Text("### Start date sensitivity")
+    variance.sens_text = vkt.Text(
+        "The start moment is never known exactly and the tidal windows make the delay sensitive to it. "
+        "The planning is run for every start moment within the variance (every hour of every day, or once a "
+        "day at the planned start time), with the same inputs. The view *Start date sensitivity* shows the "
+        "results as a distribution in buckets with the average, P50 and P90.")
+    variance.sens_days = vkt.NumberField("Start date variance (± days)", variant="slider",
+                                         min=0, max=30, step=1, default=7, num_decimals=0, flex=100)
+    variance.sens_step = vkt.OptionField("Start moments", options=list(SENS_STEPS), default=SENS_HOURLY, flex=50)
+    variance.sens_metric = vkt.OptionField("Result to analyse", options=list(SENS_METRICS),
+                                           default="Tidal delay", flex=50)
+    variance.sens_bucket = vkt.NumberField("Bucket size (0 = automatic)", default=0, min=0, flex=50,
+                                           description="In hours; in days for the total project duration.")
+    variance.lb_refresh = vkt.LineBreak()
+    variance.refresh_views_variance = vkt.SetParamsButton("Refresh views", method="refresh_views", longpoll=False,
+                                     description="Recalculate the planning and redraw all views.")
+
+    # ---------------- tab: time constraints (time restrictions) ----------------
+    constraints = vkt.Tab("Time constraints")
+    constraints.restriction_title = vkt.Text("### Time restrictions - sailing in/out of port")
+    constraints.use_time_restrictions = vkt.OptionField("Apply time restrictions?",
+                                                        options=[RESTRICT_NO, RESTRICT_YES], default=RESTRICT_NO)
+    constraints.restriction_text = vkt.Text(
         "Daily periods in which the vessel may **not sail in or out** of the port "
         "(e.g. no night transits). The vessel waits (alongside for departure, outside "
         "the port for entry) until the period has ended, on top of the tidal window. "
@@ -235,86 +272,29 @@ class Parametrization(vkt.Parametrization):
         "Add one row per time slot (e.g. night closure, pilot shift change); "
         "any number of slots can be combined and they may overlap.",
         visible=_RESTRICT_ON)
-    added_features.restrictions.time_restrictions = vkt.Table(
+    constraints.time_restrictions = vkt.Table(
         "Time restrictions", visible=_RESTRICT_ON,
         default=[dict(description="Night - no sailing", from_h=22, to_h=6)])
-    added_features.restrictions.time_restrictions.description = vkt.TextField("Description")
+    constraints.time_restrictions.description = vkt.TextField("Description")
     # no min/max on table fields (not supported by VIKTOR); 0-24 h is checked by the planning
-    added_features.restrictions.time_restrictions.from_h = vkt.NumberField("Not allowed from", suffix="h")
-    added_features.restrictions.time_restrictions.to_h = vkt.NumberField("Not allowed until", suffix="h")
+    constraints.time_restrictions.from_h = vkt.NumberField("Not allowed from", suffix="h")
+    constraints.time_restrictions.to_h = vkt.NumberField("Not allowed until", suffix="h")
+    constraints.lb_refresh = vkt.LineBreak()
+    constraints.refresh_views_constraints = vkt.SetParamsButton("Refresh views", method="refresh_views", longpoll=False,
+                                     description="Recalculate the planning and redraw all views.")
 
-    added_features.weather = vkt.Section("Weather downtime (SME)", initially_expanded=True)
-    added_features.weather.use_downtime = vkt.OptionField(
-        "Apply monthly downtime percentages?", options=[RESTRICT_NO, RESTRICT_YES], default=RESTRICT_NO,
-        description="Yes = gross planning (incl. weather downtime); No = nett planning (no weather downtime).")
-    added_features.weather.basis_note = vkt.Text("**No** = nett planning, **Yes** = gross planning "
-                                                 "(including weather downtime) in all views and the Excel export.")
-    added_features.weather.downtime_text = vkt.Text(
-        "Workability per month from the Site Metocean Report (SME): the percentage of time in which the "
-        "operation can be performed within the MWS weather window. In the gross planning, the vessel waits "
-        "on weather at site in every cycle for (working hours of the cycle) x (100 / workability of that "
-        "month - 1). The table is in the section *Monthly workability* below (collapsible).",
-        visible=_DOWNTIME_ON)
+    # ---------------- tab: download ----------------
+    download = vkt.Tab("Download")
+    download.download_text = vkt.Text("### Download\nThe planning shown in the views (nett, or gross when weather "
+                                      "downtime is applied) with all activities, cycles, departures/entries, "
+                                      "tidal data and the project duration in one Excel file.")
+    download.download_excel = vkt.DownloadButton("Download planning (Excel)", method="download_excel",
+                                                 description="All activities (from - to, type of delay), cycles, "
+                                                             "departures/entries and tidal data in one Excel file.")
+    download.lb_refresh = vkt.LineBreak()
+    download.refresh_views_download = vkt.SetParamsButton("Refresh views", method="refresh_views", longpoll=False,
+                                     description="Recalculate the planning and redraw all views.")
 
-    # separate section, so the table can be collapsed while the selection above stays visible
-    added_features.workability = vkt.Section("Monthly workability", initially_expanded=True, visible=_DOWNTIME_ON)
-    added_features.workability.downtime_name = vkt.TextField("Norm", default=DEFAULT_NORM[0], flex=100)
-    added_features.workability.downtime_mws_h = vkt.NumberField("MWS window", suffix="hr", default=DEFAULT_NORM[1],
-                                                                min=0, flex=50)
-    added_features.workability.downtime_year = vkt.NumberField("Year (SME)", suffix="%", default=DEFAULT_NORM[3],
-                                                               min=0, max=100, flex=50)
-    added_features.workability.downtime_months = vkt.Table("Workability per month",
-                                                           default=default_month_rows())
-    added_features.workability.downtime_months.month = vkt.TextField("Month")
-    # no min/max on table fields (not supported by VIKTOR); 0-100 % is checked when the norm is read
-    added_features.workability.downtime_months.pct = vkt.NumberField("Workability", suffix="%")
-
-    added_features.duration = vkt.Section("Total project duration", initially_expanded=True)
-    added_features.duration.out_cycles = vkt.OutputField(
-        "Number of cycles / nominal cycle (no delays)",
-        value=_out(lambda d: f"{d.n_cycles} cycles of {d.nominal_cycle_h:.1f} h"), flex=100)
-    added_features.duration.out_delays = vkt.OutputField(
-        "Delays gross planning: tidal + time restriction + weather = total",
-        value=_out(lambda d: f"{d.gross_plan.total_tidal_wait_h:,.1f} + {d.gross_plan.total_restriction_wait_h:,.1f} + "
-                             f"{d.gross_plan.total_weather_h:,.1f} = {d.gross_plan.total_wait_h:,.1f} h "
-                             f"({d.gross_plan.total_wait_h / 24:,.1f} days)"), flex=100)
-    added_features.duration.out_nett_cycle = vkt.OutputField(
-        "Nett cycle (nominal + tidal / time restriction delays)",
-        value=_out(lambda d: _fmt_h(d.nett_cycle_h)), flex=50)
-    added_features.duration.out_gross_cycle = vkt.OutputField(
-        "Gross cycle (nominal + all delays incl. weather)", value=_out(lambda d: _fmt_h(d.gross_cycle_h)), flex=50)
-    added_features.duration.out_nett_total = vkt.OutputField(
-        "Total nett duration", value=_out(lambda d: f"{d.n_cycles} x {d.nett_cycle_h:.1f} h = "
-                                                    f"{_fmt_h(d.nett_total_h)}"), flex=50)
-    added_features.duration.out_gross_total = vkt.OutputField(
-        "Total gross duration", value=_out(lambda d: f"{d.n_cycles} x {d.gross_cycle_h:.1f} h = "
-                                                     f"{_fmt_h(d.gross_total_h)}"), flex=50)
-    added_features.duration.out_finish = vkt.OutputField(
-        "Finish nett / gross", value=_out(lambda d: f"{d.nett_finish:%Y-%m-%d %H:%M} / {d.gross_finish:%Y-%m-%d %H:%M}"),
-        flex=100)
-
-    added_features.sensitivity = vkt.Section("Start date sensitivity", initially_expanded=True)
-    added_features.sensitivity.sens_text = vkt.Text(
-        "The start moment is never known exactly and the tidal windows make the delay sensitive to it. "
-        "The planning is run for every start moment within the variance (every hour of every day, or once a "
-        "day at the planned start time), with the same inputs and planning basis. The view *Start date "
-        "sensitivity* shows the results as a distribution in buckets with the average, P50 and P90.")
-    added_features.sensitivity.sens_days = vkt.NumberField("Start date variance (± days)", variant="slider",
-                                                           min=0, max=30, step=1, default=7, num_decimals=0,
-                                                           flex=100)
-    added_features.sensitivity.sens_step = vkt.OptionField("Start moments", options=list(SENS_STEPS),
-                                                           default=SENS_HOURLY, flex=50)
-    added_features.sensitivity.sens_metric = vkt.OptionField("Result to analyse", options=list(SENS_METRICS),
-                                                             default="Tidal delay", flex=50)
-    added_features.sensitivity.sens_bucket = vkt.NumberField("Bucket size (0 = automatic)", default=0, min=0,
-                                                             flex=50, description="In hours; in days for the "
-                                                                                  "total project duration.")
-
-    # last section of the tab; this tab uses sections, so VIKTOR requires the button to be inside one
-    added_features.refresh = vkt.Section("Refresh", initially_expanded=True)
-    added_features.refresh.refresh_views_2 = vkt.SetParamsButton(
-        "Refresh views", method="refresh_views", longpoll=False,
-        description="Recalculate the planning and redraw all views.")
 
 def _basis_text(res) -> str:
     return "Gross planning (incl. weather)" if res.weather else "Nett planning (excl. weather)"

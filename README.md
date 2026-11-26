@@ -52,9 +52,13 @@ from / until, hours of the day). With **No** (default) the table is hidden and i
 - Times are in the same time zone as the tidal data.
 
 ## Input tabs
-- **Input**: planning (incl. *Planning basis*), (nett) cycle, vessel, tidal entrance channel, tide.
-- **Added features**, in collapsible sections: time restrictions, weather downtime, monthly workability
-  (only shown when weather downtime is switched on) and total project duration.
+- **Input**: vessel, planning, (nett) cycle, tidal entrance channel, tide.
+- **Weather**: monthly workability (SME) in collapsible sections; *Yes* = gross planning (incl. weather),
+  *No* = nett planning. The month table is only shown when weather downtime is switched on.
+- **Variance**: start date sensitivity (± days slider, start moments, result, bucket size).
+- **Time constraints**: daily periods without sailing in/out of port.
+- **Download**: Excel download of the planning.
+Every tab has a *Refresh views* button at the bottom. The project duration is in the view *Project duration*.
 
 ## Weather downtime (monthly workability, SME)
 Optional (*Apply monthly downtime percentages?* = Yes). Section *Monthly workability*: norm name,
