@@ -609,25 +609,18 @@ def _sim_duration(params, sim=None):
 
 
 def build_sim_gantt(sim, params) -> go.Figure:
-    """The P50 run as a Gantt. Title, from the top:
-    most likely planning + basis / vessel, cycles, nominal cycle / start - end / P10-P50-P90 finish / delays."""
+    """The most likely run as a Gantt. Title: 'Gross planning most likely' with start and finish only;
+    the other figures are in the Results tab."""
     res = sim.p50_plan
-    vessel = (params.vessel_name or "").strip()
-    fig = build_gantt(res, vessel)
-    delay = fig.layout.title.text.split("<br>")[-1]          # 'Total delay ... (tidal, weather, restriction)'
-    f = sim.finish[sim.basis]
-    lines = [
-        f"<b>Most likely planning (P50 run {sim.p50_index + 1} of {sim.n_runs})</b> | {_basis_text(res)}",
-        f"{vessel + ' | ' if vessel else ''}{res.cycles} cycles | nominal cycle {res.nominal_cycle_h:.0f} h",
-        f"Start {res.start.day} {res.start:%B %Y} | End {res.finish.day} {res.finish:%B %Y}",
-        f"Finish P10 {f['p10'].day} {f['p10']:%B %Y} | P50 {f['p50'].day} {f['p50']:%B %Y} | "
-        f"P90 {f['p90'].day} {f['p90']:%B %Y} ({_sim_note(sim, params)})",
-        delay,
-    ] + ([NO_VARIANCE_NOTE] if _no_variance(params) else [])
+    fig = build_gantt(res, (params.vessel_name or "").strip())
+    lines = ["<b>Gross planning most likely</b>",
+             f"Start {res.start.day} {res.start:%B %Y} | Finish {res.finish.day} {res.finish:%B %Y}"]
+    if _no_variance(params):
+        lines.append(NO_VARIANCE_NOTE)
     # title anchored 18 px below the top edge (clear of the toolbar), chart right below it
-    fig.update_layout(title=dict(text="<br>".join(lines), x=0.01, xanchor="left", y=1 - 18 / 640, yanchor="top",
+    fig.update_layout(title=dict(text="<br>".join(lines), x=0.01, xanchor="left", y=1 - 18 / 600, yanchor="top",
                                  font=dict(size=15)),
-                      height=640, margin=dict(l=220, t=140 + 20 * (len(lines) - 5)))
+                      height=600, margin=dict(l=220, t=75 + 20 * (len(lines) - 2)))
     return fig
 
 
@@ -785,7 +778,7 @@ class Scenario(vkt.Controller):
         params = _flat(params)
         return _result(build_sim_results(_simulation(params), params), params)
 
-    @vkt.PlotlyView("Durations", duration_guess=2)
+    @vkt.PlotlyView("Results", duration_guess=2)
     def durations_view(self, params, **kwargs):
         params = _flat(params)
         sim = _simulation(params)

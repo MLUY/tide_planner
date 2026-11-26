@@ -60,12 +60,12 @@ from / until, hours of the day). With **No** (default) the table is hidden and i
 - **Download**: Excel of the most likely planning, and the simulation workbook.
 
 ## Results (all from the simulation)
-- **Planning**: the most likely planning (P50 run) as a Gantt, with P10 / P50 / P90 finish.
+- **Planning**: Gantt of the most likely planning, titled *Gross planning most likely* with start and finish.
 - **Cycle**: tide and cycles of the P50 run, with the required tide for departure (loaded) and entry (empty).
 - **Table**: cycle table of the P50 run.
 - **Simulation**: P10 / P50 / P90 / average of tidal, time restriction, weather and total delay, tidal delay
   as % of the duration excl. weather, project duration and finish.
-- **Durations**: project duration of the most likely run, with the delays per month stacked by cause.
+- **Results**: project duration of the most likely run, with the delays per month stacked by cause.
 
 ## Loaded / empty draft
 Departure uses the loaded draft, entry the empty draft: required tide = draft + keel clearance - channel
