@@ -625,6 +625,29 @@ def build_sim_gantt(sim, params) -> go.Figure:
     return fig
 
 
+def _solid_buckets(values: np.ndarray, max_bins: int = 15, min_bins: int = 4,
+                   min_share: float = 0.02) -> tuple[float, float]:
+    """(bucket size, first edge) for a solid histogram: the smallest 'nice' bucket size (1 / 2 / 2.5 / 5 x 10^k)
+    for which every bucket inside the distribution (all but the outer two) holds at least min_share of the
+    runs - so no empty or almost empty buckets - with at most max_bins and, if possible, at least min_bins."""
+    lo_v, hi_v = float(values.min()), float(values.max())
+    span = hi_v - lo_v
+    if span < 1e-6:                                   # all runs identical: one bucket
+        return 0.1, math.floor(lo_v / 0.1) * 0.1
+    sizes = sorted({m * 10 ** k for k in range(-3, 4) for m in (1, 2, 2.5, 5)})
+    need = max(1, math.ceil(min_share * len(values)))
+    last = None
+    for sz in sizes:
+        if span / sz > max_bins:
+            continue
+        lo = math.floor(lo_v / sz) * sz
+        counts, _ = np.histogram(values, bins=np.arange(lo, hi_v + sz * 1.0001, sz))
+        last = (sz, lo)
+        if len(counts) <= min_bins or (counts[1:-1] >= need).all():
+            return last
+    return last
+
+
 def build_sim_results(sim, params) -> go.Figure:
     cols = [sim.basis]
     names = {"nett": "Planning", "gross": "Planning (incl. weather)"}
@@ -653,13 +676,7 @@ def build_sim_results(sim, params) -> go.Figure:
     colors = {"nett": "#1f77b4", "gross": COLORS["Weather downtime"]}
     for c in cols:
         days = np.array([r[c]["duration"] for r in sim.runs]) / 24
-        # connected buckets: bin width from this distribution's own spread (about 12 bins, rounded to a
-        # 'nice' number of days), no gaps between the bars
-        span = float(days.max() - days.min())
-        raw = max(span / 12, 0.05)
-        mag = 10 ** math.floor(math.log10(raw))
-        size = next(m * mag for m in (1, 2, 2.5, 5, 10) if m * mag >= raw)
-        lo = math.floor(days.min() / size) * size
+        size, lo = _solid_buckets(days)
         fig.add_trace(go.Histogram(x=days.tolist(), name=f"{names[c]} - runs", marker_color=colors[c], opacity=0.75,
                                    xbins=dict(start=lo, end=days.max() + size, size=size),
                                    marker_line=dict(color="white", width=0.5),
@@ -675,7 +692,8 @@ def build_sim_results(sim, params) -> go.Figure:
             # drawn as a plain shape on the histogram axis (add_vline fails in a figure with a table)
             fig.add_shape(type="line", xref="x", yref="y domain", x0=st[q] / 24, x1=st[q] / 24, y0=0, y1=1,
                           line=dict(color=colors[c], dash=dash, width=1.5))
-    fig.update_xaxes(title_text="Project duration (days) - P50 dashed, P90 solid", row=2, col=1)
+    fig.update_xaxes(title_text=f"Project duration (days) - bucket {size:g} days - P50 dashed, P90 solid",
+                     row=2, col=1)
     fig.update_yaxes(title_text="Number of runs", rangemode="tozero", row=2, col=1, secondary_y=False)
     fig.update_yaxes(title_text="cumulative %", range=[0, 105], tickvals=[0, 25, 50, 75, 100], showgrid=False,
                      row=2, col=1, secondary_y=True)
