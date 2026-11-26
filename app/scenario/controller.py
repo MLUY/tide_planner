@@ -161,10 +161,6 @@ class Parametrization(vkt.Parametrization):
     # ---------------- tab 1: planning, cycle, vessel, channel, tide ----------------
     input = vkt.Tab("Input")
     input.title = vkt.Text("##  Tidal planner")
-    # 'Refresh views' raises this hidden counter: VIKTOR redraws all views when an input changes
-    input.refresh_counter = vkt.HiddenField("Refresh counter")
-    input.refresh_views = vkt.SetParamsButton("Refresh views", method="refresh_views", longpoll=False, flex=40,
-                                              description="Recalculate the planning and redraw all views.")
     input.download_excel = vkt.DownloadButton("Download planning (Excel)", method="download_excel",
                                               description="All activities (from - to, type of delay), cycles, "
                                                           "departures/entries and tidal data in one Excel file.")
@@ -211,14 +207,14 @@ class Parametrization(vkt.Parametrization):
                                       "a file of at least one full year; a shorter file is only used for its own "
                                       "period. Repeated years are an approximation of the real tide.*")
 
+    input.lb_refresh = vkt.LineBreak()
+    # 'Refresh views' raises this hidden counter: VIKTOR redraws all views when an input changes
+    input.refresh_counter = vkt.HiddenField("Refresh counter")
+    input.refresh_views = vkt.SetParamsButton("Refresh views", method="refresh_views", longpoll=False,
+                                              description="Recalculate the planning and redraw all views.")
+
     # ---------------- tab 2: time restrictions, weather downtime, project duration ----------------
     added_features = vkt.Tab("Added features")
-    # this tab uses sections, and VIKTOR requires every field of such a tab to be inside a section
-    added_features.refresh = vkt.Section("Refresh", initially_expanded=True)
-    added_features.refresh.refresh_views_2 = vkt.SetParamsButton(
-        "Refresh views", method="refresh_views", longpoll=False, flex=40,
-        description="Recalculate the planning and redraw all views.")
-
     added_features.restrictions = vkt.Section("Time restrictions - sailing in/out of port", initially_expanded=True)
     added_features.restrictions.use_time_restrictions = vkt.OptionField(
         "Apply time restrictions?", options=[RESTRICT_NO, RESTRICT_YES], default=RESTRICT_NO)
@@ -300,6 +296,12 @@ class Parametrization(vkt.Parametrization):
     added_features.sensitivity.sens_bucket = vkt.NumberField("Bucket size (0 = automatic)", default=0, min=0,
                                                              flex=50, description="In hours; in days for the "
                                                                                   "total project duration.")
+
+    # last section of the tab; this tab uses sections, so VIKTOR requires the button to be inside one
+    added_features.refresh = vkt.Section("Refresh", initially_expanded=True)
+    added_features.refresh.refresh_views_2 = vkt.SetParamsButton(
+        "Refresh views", method="refresh_views", longpoll=False,
+        description="Recalculate the planning and redraw all views.")
 
 def _basis_text(res) -> str:
     return f"Gross planning ({res.weather.name})" if res.weather else "Nett planning"
