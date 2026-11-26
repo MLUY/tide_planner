@@ -33,7 +33,7 @@ SENS_METRICS = {
 BASIS_GROSS, BASIS_NETT = "Gross (incl. weather downtime)", "Nett (excl. weather downtime)"
 DEFAULT_TIDE = Path(__file__).resolve().parents[2] / "sample_data" / "gunsan_tide_2026_hourly.csv"
 TABS = ("input", "added_features")
-SECTIONS = ("restrictions", "weather", "workability", "duration", "sensitivity")   # collapsible sections in 'Added features'
+SECTIONS = ("refresh", "restrictions", "weather", "workability", "duration", "sensitivity")   # collapsible sections in 'Added features'
 
 
 def _flat(params):
@@ -213,9 +213,11 @@ class Parametrization(vkt.Parametrization):
 
     # ---------------- tab 2: time restrictions, weather downtime, project duration ----------------
     added_features = vkt.Tab("Added features")
-    added_features.refresh_views_2 = vkt.SetParamsButton("Refresh views", method="refresh_views", longpoll=False,
-                                                         flex=40, description="Recalculate the planning and redraw "
-                                                                              "all views.")
+    # this tab uses sections, and VIKTOR requires every field of such a tab to be inside a section
+    added_features.refresh = vkt.Section("Refresh", initially_expanded=True)
+    added_features.refresh.refresh_views_2 = vkt.SetParamsButton(
+        "Refresh views", method="refresh_views", longpoll=False, flex=40,
+        description="Recalculate the planning and redraw all views.")
 
     added_features.restrictions = vkt.Section("Time restrictions - sailing in/out of port", initially_expanded=True)
     added_features.restrictions.use_time_restrictions = vkt.OptionField(
