@@ -162,6 +162,13 @@ class Parametrization(vkt.Parametrization):
     # ---------------- tab: input (vessel, planning, cycle, channel, tide) ----------------
     input = vkt.Tab("Input")
     input.title = vkt.Text("##  Tidal planner")
+    input.intro = vkt.Text(
+        "*The Tidal planner plans every installation cycle against the tidal windows of the port entrance, "
+        "optionally with weather downtime and time restrictions. Because the cycles repeat with identical "
+        "durations, a small shift can make the whole planning keep hitting or keep missing the tidal windows - a "
+        "'lucky' or 'unlucky' result. To avoid this, every simulation run varies the phase durations within the "
+        "- % / + % of the cycle table, and the results show the most likely planning (P50) and the spread "
+        "(P10 - P90).*")
 
     input.vessel_text = vkt.Text("### Vessel")
     input.vessel_name = vkt.TextField("Vessel Name", default="Bokalift 2", flex=100)
