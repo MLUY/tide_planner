@@ -748,9 +748,21 @@ class Scenario(vkt.Controller):
     def cycle_view(self, params, **kwargs):
         params = _flat(params)
         sim = _simulation(params)
-        fig = build_tide_cycles(sim.p50_plan)
-        fig["layout"]["title"]["text"] = (f"Most likely planning (P50 run {sim.p50_index + 1} of {sim.n_runs}) - "
-                                          + fig["layout"]["title"]["text"])
+        res = sim.p50_plan
+        fig = build_tide_cycles(res)
+        # title near the top: most likely planning + basis / cycles + delays / small print (tidal data note)
+        old = fig["layout"]["title"]["text"]
+        small = old[old.index("<br><sup>"):] if "<br><sup>" in old else ""
+        parts = [f"tidal {res.total_tidal_wait_h:.0f} h"]
+        if res.weather:
+            parts.append(f"weather {res.total_weather_h:.0f} h")
+        if res.restrictions:
+            parts.append(f"time restriction {res.total_restriction_wait_h:.0f} h")
+        text = (f"<b>Most likely planning (P50 run {sim.p50_index + 1} of {sim.n_runs})</b> | {_basis_text(res)}<br>"
+                f"{res.cycles} cycles | Total delay {res.total_wait_h:.0f} h ({', '.join(parts)}){small}")
+        fig["layout"]["title"] = dict(text=text, x=0.01, xanchor="left", y=1 - 18 / 650, yanchor="top",
+                                      font=dict(size=15))
+        fig["layout"]["margin"] = dict(t=95 if small else 80)
         return _result(fig, params)
 
     @vkt.PlotlyView("Table", duration_guess=2)
