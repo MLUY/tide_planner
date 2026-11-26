@@ -633,7 +633,7 @@ def build_sim_results(sim, params) -> go.Figure:
         cells.append(col)
     fill = [["#EEF3F9" if i % 2 else "white" for i in range(len(rows) + 1)]] * len(cells)
 
-    fig = make_subplots(rows=2, cols=1, row_heights=[0.40, 0.60], vertical_spacing=0.1,
+    fig = make_subplots(rows=2, cols=1, row_heights=[0.47, 0.53], vertical_spacing=0.08,
                         specs=[[{"type": "table"}], [{"secondary_y": True}]])
     fig.add_trace(go.Table(columnwidth=[2] + [3] * len(cols),
                            header=dict(values=header, align="left", fill_color="#C8D4E3", height=36),
@@ -641,8 +641,17 @@ def build_sim_results(sim, params) -> go.Figure:
     colors = {"nett": "#1f77b4", "gross": COLORS["Weather downtime"]}
     for c in cols:
         days = np.array([r[c]["duration"] for r in sim.runs]) / 24
-        fig.add_trace(go.Histogram(x=days.tolist(), name=f"{names[c]} - runs", marker_color=colors[c], opacity=0.65,
-                                   nbinsx=30, hovertemplate="%{x} days: %{y} runs<extra></extra>"),
+        # connected buckets: bin width from this distribution's own spread (about 12 bins, rounded to a
+        # 'nice' number of days), no gaps between the bars
+        span = float(days.max() - days.min())
+        raw = max(span / 12, 0.05)
+        mag = 10 ** math.floor(math.log10(raw))
+        size = next(m * mag for m in (1, 2, 2.5, 5, 10) if m * mag >= raw)
+        lo = math.floor(days.min() / size) * size
+        fig.add_trace(go.Histogram(x=days.tolist(), name=f"{names[c]} - runs", marker_color=colors[c], opacity=0.75,
+                                   xbins=dict(start=lo, end=days.max() + size, size=size),
+                                   marker_line=dict(color="white", width=0.5),
+                                   hovertemplate="%{x} days: %{y} runs<extra></extra>"),
                       row=2, col=1, secondary_y=False)
         xs = np.sort(days)
         fig.add_trace(go.Scatter(x=xs.tolist(), y=(np.arange(1, len(xs) + 1) / len(xs) * 100).tolist(),
@@ -658,12 +667,12 @@ def build_sim_results(sim, params) -> go.Figure:
     fig.update_yaxes(title_text="Number of runs", rangemode="tozero", row=2, col=1, secondary_y=False)
     fig.update_yaxes(title_text="cumulative %", range=[0, 105], tickvals=[0, 25, 50, 75, 100], showgrid=False,
                      row=2, col=1, secondary_y=True)
-    fig.update_layout(barmode="overlay", height=760, margin=dict(t=90, b=40, l=60, r=20),
+    fig.update_layout(barmode="overlay", bargap=0, height=820, margin=dict(t=105, b=40, l=60, r=20),
                       legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.08, yanchor="top"),
                       title=(f"Simulation results - variance on the phase durations ({_sim_note(sim, params)})<br>"
                              f"<sup>P50 = half of the runs finish earlier, P90 = 90 % of the runs finish earlier. "
-                             f"{'Nett and gross use the same drawn durations. ' + _tidal_check(sim) if weather else 'Weather downtime off: nett only.'}"
-                             f"</sup>"))
+                             f"{'Nett and gross use the same drawn durations.' if weather else 'Weather downtime off: nett only.'}"
+                             f"</sup>" + (f"<br><sup>{_tidal_check(sim)}</sup>" if weather else "")))
     return fig
 
 
