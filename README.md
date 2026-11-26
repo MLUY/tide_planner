@@ -52,13 +52,24 @@ from / until, hours of the day). With **No** (default) the table is hidden and i
 - Times are in the same time zone as the tidal data.
 
 ## Input tabs
-- **Input**: vessel, planning, (nett) cycle, tidal entrance channel, tide.
-- **Weather**: monthly workability (SME) in collapsible sections; *Yes* = gross planning (incl. weather),
-  *No* = nett planning. The month table is only shown when weather downtime is switched on.
-- **Variance**: start date sensitivity (± days slider, start moments, result, bucket size).
+- **Input**: vessel (loaded draft for departure, empty draft for entry), planning, (nett) cycle with
+  - % / + % variance per phase, tidal entrance channel, tide, and at the bottom the **simulation**
+  (number of runs, default 300, button *Simulate*).
+- **Weather**: monthly workability (SME); *Yes* = gross planning (incl. weather), *No* = nett planning.
 - **Time constraints**: daily periods without sailing in/out of port.
-- **Download**: Excel download of the planning.
-Every tab has a *Refresh views* button at the bottom. The project duration is in the view *Project duration*.
+- **Download**: Excel of the most likely planning, and the simulation workbook.
+
+## Results (all from the simulation)
+- **Planning**: the most likely planning (P50 run) as a Gantt, with P10 / P50 / P90 finish.
+- **Cycle**: tide and cycles of the P50 run, with the required tide for departure (loaded) and entry (empty).
+- **Table**: cycle table of the P50 run.
+- **Simulation**: P10 / P50 / P90 / average of tidal, time restriction, weather and total delay, tidal delay
+  as % of the duration excl. weather (nett and gross are similar), project duration and finish.
+- **Durations**: project duration of the most likely nett and gross runs side by side.
+
+## Loaded / empty draft
+Departure uses the loaded draft, entry the empty draft: required tide = draft + keel clearance - channel
+depth (+ margins), so entering empty needs less tide.
 
 ## Weather downtime (monthly workability, SME)
 Optional (*Apply monthly downtime percentages?* = Yes). Section *Monthly workability*: norm name,

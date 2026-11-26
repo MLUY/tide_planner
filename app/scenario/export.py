@@ -151,8 +151,11 @@ def _summary(ws, res: PlanResult, inputs: dict, dur=None) -> None:
     section("Inputs")
     for label, value, unit in inputs.get("general", []):
         line(label, value, DT if hasattr(value, "hour") else None, unit)
-    line("Required tide - rising", _cm(res.rule.rising_cm), "0", "cm")
-    line("Required tide - falling", _cm(res.rule.falling_cm), "0", "cm")
+    er = res.entry_rule or res.rule
+    line("Required tide departure (loaded) - rising", _cm(res.rule.rising_cm), "0", "cm")
+    line("Required tide departure (loaded) - falling", _cm(res.rule.falling_cm), "0", "cm")
+    line("Required tide entry (empty) - rising", _cm(er.rising_cm), "0", "cm")
+    line("Required tide entry (empty) - falling", _cm(er.falling_cm), "0", "cm")
     line("Channel transit time", res.rule.transit_h, "0.00", "h")
     row += 1
 
@@ -243,11 +246,13 @@ def _gates(ws, res: PlanResult) -> None:
 
 def _tide(ws, res: PlanResult) -> None:
     tide, rule = res.tide, res.rule
+    entry_rule = res.entry_rule or rule
     h0 = max(tide.to_hours(res.start) - 24, 0.0)
     h1 = min(tide.to_hours(res.finish) + 24, float(tide.hours[-1]))
     hrs = tide.hours[(tide.hours >= h0) & (tide.hours <= h1)]
     rising = tide.rising(hrs)
     is_open = tide.gate_open(hrs, rule)
+    is_open_entry = tide.gate_open(hrs, entry_rule)
     hod = tide.hour_of_day(hrs)
     blocked = np.zeros(hrs.shape, bool)
     for r in res.restrictions:
@@ -255,23 +260,26 @@ def _tide(ws, res: PlanResult) -> None:
     # what the vessel is doing at each moment
     seg_starts = np.array([tide.to_hours(s["start"]) for s in res.segments])
     rows = []
-    for h, lv, up, op, bl in zip(hrs, tide.level_cm(hrs), rising, is_open, blocked):
+    for h, lv, up, op, oe, bl in zip(hrs, tide.level_cm(hrs), rising, is_open, is_open_entry, blocked):
         idx = np.searchsorted(seg_starts, h, side="right") - 1
         act = ""
         if 0 <= idx < len(res.segments) and h < tide.to_hours(res.segments[idx]["finish"]):
             act = f"C{res.segments[idx]['cycle']} {res.segments[idx]['activity']}"
         ts = tide.t0 + timedelta(hours=float(h))
         rows.append([ts, _cm(lv), "Rising" if up else "Falling",
-                     _cm(rule.rising_cm if up else rule.falling_cm), "Yes" if op else "No",
-                     "Yes" if bl else "No", "Yes" if (op and not bl) else "No", act,
-                     "Data file" if tide.is_measured(ts) else f"Repeated from {tide.data_start.year}"])
-    _table(ws, ["Date-time", "Tide (cm)", "Tide", "Required (cm)", "Tidal window open",
-                "Time restriction active", "Sailing allowed", "Vessel activity", "Tidal data"],
-           rows, formats={0: DT, 1: "0", 3: "0"}, widths=[17, 9, 9, 10, 10, 12, 10, 34, 18])
+                     _cm(rule.rising_cm if up else rule.falling_cm),
+                     _cm(entry_rule.rising_cm if up else entry_rule.falling_cm),
+                     "Yes" if bl else "No", "Yes" if (op and not bl) else "No", "Yes" if (oe and not bl) else "No",
+                     act, "Data file" if tide.is_measured(ts) else f"Repeated from {tide.data_start.year}"])
+    _table(ws, ["Date-time", "Tide (cm)", "Tide", "Required departure (cm)", "Required entry (cm)",
+                "Time restriction active", "Departure allowed (loaded)", "Entry allowed (empty)",
+                "Vessel activity", "Tidal data"],
+           rows, formats={0: DT, 1: "0", 3: "0", 4: "0"}, widths=[17, 9, 9, 11, 11, 12, 12, 12, 34, 18])
     green, red = PatternFill("solid", fgColor="D5EDD5"), PatternFill("solid", fgColor="F7D0D0")
     for r in range(2, len(rows) + 2):
-        c = ws.cell(row=r, column=7)
-        c.fill = green if c.value == "Yes" else red
+        for col in (7, 8):
+            c = ws.cell(row=r, column=col)
+            c.fill = green if c.value == "Yes" else red
 
 
 def _downtime(ws, dur) -> None:

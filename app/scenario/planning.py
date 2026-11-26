@@ -110,7 +110,8 @@ class PlanResult:
     total_wait_h: float
     nominal_cycle_h: float
     tide: object = None
-    rule: GateRule = None
+    rule: GateRule = None           # departure (loaded draft)
+    entry_rule: GateRule = None     # entry (empty draft); same as rule when not given
     cycle_stats: list = field(default_factory=list)
     restrictions: list = field(default_factory=list)
     total_tidal_wait_h: float = 0.0
@@ -340,13 +341,14 @@ def _gate(tide, rule, cycle, direction, t, cum, segs, gates, points, restriction
 
 def plan_installation(*, start: datetime, phases: list[Phase], tide: TideCurve, rule: GateRule,
                       n_cycles: int, restrictions: list[TimeRestriction] | None = None,
-                      weather=None, cycle_hours=None) -> PlanResult:
+                      weather=None, cycle_hours=None, entry_rule: GateRule | None = None) -> PlanResult:
     """Repeat the cycle n_cycles times from start.
     restrictions: daily periods in which the vessel may not sail in or out (departure and entry).
     weather: optional norm (.name, .mws_h, .monthly_pct = 12 workability %) -> gross planning:
         on arrival at site the vessel waits on weather for
         (working hours of the cycle) x (100 / workability of that month - 1);
         the tidal windows are then planned on this later timeline.
+    rule / entry_rule: tide required for departure (loaded draft) and entry (empty draft; = rule if None).
     cycle_hours: optional durations per cycle and phase (n_cycles x n_phases, hours) instead of the
         nominal phase durations - used by the simulation with variance on the durations.
     With at least one year of tidal data, the data is repeated for other years as far as needed."""
@@ -366,7 +368,8 @@ def plan_installation(*, start: datetime, phases: list[Phase], tide: TideCurve, 
             raise PlanningError(f"Tidal data starts {tide.t0:%Y-%m-%d %H:%M}, after the start "
                                 f"{start:%Y-%m-%d %H:%M}. Use a later start or a tidal file that covers it "
                                 f"(a file of at least one year is repeated for other years automatically).")
-        return _plan(start, phases, tide, rule, n_cycles, restrictions, weather=weather, cycle_hours=cycle_hours)
+        return _plan(start, phases, tide, rule, n_cycles, restrictions, weather=weather, cycle_hours=cycle_hours,
+                     entry_rule=entry_rule)
 
     # first guess of the period needed; doubled when the schedule runs past it
     nominal = sum(p.hours for p in phases)
@@ -375,7 +378,7 @@ def plan_installation(*, start: datetime, phases: list[Phase], tide: TideCurve, 
         curve = tide.repeated_to_cover(start, start + timedelta(hours=horizon_h + MAX_WAIT_H))
         try:
             return _plan(start, phases, curve, rule, n_cycles, restrictions, raise_data_end=True,
-                         weather=weather, cycle_hours=cycle_hours)
+                         weather=weather, cycle_hours=cycle_hours, entry_rule=entry_rule)
         except _DataEnd:
             horizon_h *= 2
     raise PlanningError("The planning is too long (more than 100 years); check the number of cycles.")
@@ -388,7 +391,8 @@ def _weather_wait(weather, t: datetime, work_h: float) -> tuple[float, float]:
 
 
 def _plan(start, phases, tide, rule, n_cycles, restrictions, raise_data_end=False, weather=None,
-          cycle_hours=None) -> PlanResult:
+          cycle_hours=None, entry_rule=None) -> PlanResult:
+    entry_rule = entry_rule or rule       # entry with the empty draft (less tide needed)
     t, cum = start, 0.0
     segments, gates, points, stats = [], [], [(start, 0.0)], []
 
@@ -426,7 +430,7 @@ def _plan(start, phases, tide, rule, n_cycles, restrictions, raise_data_end=Fals
                         t, cum = fin, cum + wait
                         c_points.append((t, cum))
                 if ph.type == TYPE_IN:
-                    t, cum = _gate(tide, rule, cycle, "Entry", t, cum, c_segs, c_gates, c_points,
+                    t, cum = _gate(tide, entry_rule, cycle, "Entry", t, cum, c_segs, c_gates, c_points,
                                    restrictions)
         except _DataEnd:
             if raise_data_end:
@@ -448,7 +452,7 @@ def _plan(start, phases, tide, rule, n_cycles, restrictions, raise_data_end=Fals
     return PlanResult(segments=segments, gates=gates, delay_points=points, cycles=len(stats),
                       start=start, finish=t, total_wait_h=cum,
                       nominal_cycle_h=float(sum(p.hours for p in phases)),
-                      tide=tide, rule=rule, cycle_stats=stats, restrictions=restrictions,
+                      tide=tide, rule=rule, entry_rule=entry_rule, cycle_stats=stats, restrictions=restrictions,
                       total_tidal_wait_h=sum(c["tidal_wait_h"] for c in stats),
                       total_restriction_wait_h=sum(c["restriction_wait_h"] for c in stats),
                       total_weather_h=sum(c["weather_h"] for c in stats), weather=weather)
