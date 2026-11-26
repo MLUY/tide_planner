@@ -524,42 +524,53 @@ def build_duration(d) -> go.Figure:
                                  align="left", fill_color="#C8D4E3", height=28),
                      cells=dict(values=[[r[0] for r in rows], [r[1] for r in rows], [r[2] for r in rows]],
                                 align="left", height=24, fill_color=[fill, fill, fill]))
-    if not d.norm:
-        fig = go.Figure(table)
-        fig.update_layout(title="Total project duration - no weather downtime (nett planning or weather downtime "
-                                "switched off): gross = nett", height=420,
-                          margin=dict(t=60, b=20, l=60, r=20))
-        return fig
-    # table on top (fixed height so all rows are visible), compact bar chart below
+    # delays per month of the planning shown (gross with weather downtime, otherwise nett), stacked by cause;
+    # every wait is counted in the month in which it starts, so the bars add up to 'Total delay' in the table
+    plan = d.gross_plan if d.norm else d.nett_plan
+    causes = [("Tidal wait", "Tidal"), ("Weather downtime", "Weather"), ("Time restriction wait", "Time restriction")]
+    months = {}
+    for seg in plan.segments:
+        if seg["category"] in dict(causes):
+            key = datetime(seg["start"].year, seg["start"].month, 1)
+            months.setdefault(key, {c: 0.0 for c, _ in causes})[seg["category"]] += seg["hours"]
+    keys = sorted(months)
+    pct = {m["month"]: m["pct"] for m in d.months}
+    labels = [f"<b>{k:%b %Y}</b>" + (f"<br>workability {pct[k]:.1f} %" if k in pct else "") for k in keys]
+    basis = "gross planning (incl. weather)" if d.norm else "nett planning (excl. weather)"
+
     fig = make_subplots(rows=2, cols=1, row_heights=[0.60, 0.40], vertical_spacing=0.09,
                         specs=[[{"type": "table"}], [{"type": "xy"}]])
     fig.add_trace(table, row=1, col=1)
-    # month, workability and number of cycles under the bar; the days inside the bar (always horizontal)
-    labels = [f"<b>{m['month']:%b %Y}</b><br>{m['pct']:.1f} % | {m['cycles']} cycle{'s' if m['cycles'] != 1 else ''}"
-              for m in d.months]
-    fig.add_trace(go.Bar(
-        x=labels, y=[m["downtime_h"] / 24 for m in d.months], name="Weather downtime",
-        marker=dict(color=COLORS["Weather downtime"], line=dict(width=0)), opacity=0.85,
-        text=[f"<b>{m['downtime_h'] / 24:.1f} d</b>" for m in d.months],
-        textposition="inside", insidetextanchor="middle", textangle=0, constraintext="none",
-        textfont=dict(color="white", size=14),
-        customdata=[[m["downtime_h"], m["pct"], m["cycles"]] for m in d.months],
-        hovertemplate="%{x}: %{y:.1f} days (%{customdata[0]:.1f} h) weather downtime<br>"
-                      "workability %{customdata[1]:.1f} %, %{customdata[2]} cycle(s)<extra></extra>"),
-        row=2, col=1)
-    fig.update_yaxes(title_text="Weather downtime (days)", rangemode="tozero", row=2, col=1)
+    for cat, name in causes:
+        vals = [months[k][cat] / 24 for k in keys]
+        if not any(v > 1e-9 for v in vals):
+            continue
+        fig.add_trace(go.Bar(
+            x=labels, y=vals, name=name, marker=dict(color=COLORS[cat], line=dict(width=0)), opacity=0.9,
+            text=[f"{v:.1f}" if v >= 0.3 else "" for v in vals], textposition="inside", insidetextanchor="middle",
+            textangle=0, textfont=dict(color="white", size=12),
+            customdata=[months[k][cat] for k in keys],
+            hovertemplate="%{x}<br>" + name + ": %{y:.1f} days (%{customdata:.1f} h)<extra></extra>"), row=2, col=1)
+    totals = [sum(months[k].values()) / 24 for k in keys]
+    fig.add_trace(go.Scatter(x=labels, y=totals, mode="text", text=[f"<b>{t:.1f} d</b>" for t in totals],
+                             textposition="top center", showlegend=False, hoverinfo="skip"), row=2, col=1)
+    fig.update_yaxes(title_text="Delay (days)", rangemode="tozero", range=[0, max(totals + [0.1]) * 1.2],
+                     row=2, col=1)
     fig.update_xaxes(tickfont=dict(size=11), row=2, col=1)
-    # small title directly above the bar chart, explaining what the bars show
     fig.add_annotation(xref="x domain", yref="y domain", x=0, y=1.02, xanchor="left", yanchor="bottom",
                        showarrow=False, align="left",
-                       text=("<b>Weather downtime per month (gross planning)</b><br>"
-                             "<span style='font-size:11px'>Days the vessel waits on weather at site, counted in the "
-                             "month it arrives at site. Below each bar: workability of that month (SME) | number of "
-                             "cycles arriving at site.</span>"))
-    fig.update_layout(height=680, margin=dict(t=75, b=15, l=60, r=20), showlegend=False, bargap=0.2,
-                      uniformtext=dict(minsize=11, mode="show"),
-                      title=f"Total project duration - nett {d.nett_total_h / 24:.1f} days, gross "
-                            f"{d.gross_total_h / 24:.1f} days (incl. weather)")
+                       text=(f"<b>Delays per month - {basis}</b><br>"
+                             f"<span style='font-size:11px'>Tidal, weather and time restriction waiting in days, "
+                             f"counted in the month the wait starts. All bars together = Total delay in the table "
+                             f"({sum(totals):.1f} days).</span>"))
+    title = (f"Total project duration - nett {d.nett_total_h / 24:.1f} days, gross {d.gross_total_h / 24:.1f} days "
+             f"(incl. weather)" if d.norm else
+             "Total project duration - no weather downtime (weather downtime switched off): gross = nett")
+    fig.update_layout(height=700, margin=dict(t=75, b=15, l=60, r=20), barmode="stack", bargap=0.25,
+                      uniformtext=dict(minsize=10, mode="hide"),        # no unreadable numbers in thin segments
+                      legend=dict(orientation="h", x=1, xanchor="right", y=0.38, yanchor="bottom",
+                                  traceorder="normal"),
+                      title=title)
     return fig
 
 
