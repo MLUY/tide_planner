@@ -5,7 +5,7 @@ Every run draws, for every cycle and every phase, a duration from a triangular d
 (minimum = nominal x (1 - minus %), most likely = nominal, maximum = nominal x (1 + plus %)) and
 plans the nett planning and - when weather downtime is applied - the gross planning with the
 same draws. Optionally the start moment is drawn as well (whole hours within +- N days).
-The P50 run is the run whose project duration (of the planning basis) is closest to the median.
+The most likely (P50) run is the run closest to the median in both project duration and tidal delay.
 
 Pure Python (no VIKTOR imports) so it can be tested on its own.
 """
@@ -94,11 +94,16 @@ def simulate(*, start: datetime, phases: list[Phase], minus_pct: list[float], pl
         ends = np.array([(r[b]["finish"] - _EPOCH).total_seconds() / 3600 for r in runs])
         finish[b] = {q: _EPOCH + timedelta(hours=float(np.percentile(ends, int(q[1:]))))
                      for q in ("p10", "p50", "p90")}
-    # most likely planning per basis: the run whose project duration is closest to the median
+    # most likely planning per basis: the run closest to the median in project duration AND tidal delay
+    # (each scaled by its spread), so the planning shown is typical for both and not a 'lucky' or 'unlucky' run
     p50_index, p50_plans = {}, {}
     for b in ("nett", "gross"):
-        durations = np.array([r[b]["duration"] for r in runs])
-        idx = int(np.argmin(np.abs(durations - np.percentile(durations, 50))))
+        score = np.zeros(len(runs))
+        for m in ("duration", "tidal"):
+            v = np.array([r[b][m] for r in runs])
+            spread = np.percentile(v, 75) - np.percentile(v, 25)
+            score += np.abs(v - np.percentile(v, 50)) / (spread if spread > 1e-9 else 1.0)
+        idx = int(np.argmin(score))
         r = runs[idx]
         p50_index[b] = idx
         p50_plans[b] = plan_installation(start=r["start"], phases=phases, tide=tide, rule=rule, n_cycles=n_cycles,

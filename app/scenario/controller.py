@@ -606,6 +606,15 @@ def _simulation(params):
     return sim
 
 
+def _no_variance(params) -> bool:
+    """True when no phase has a - % / + % variance (e.g. a scenario saved before these columns existed)."""
+    return not any(float(r.var_minus or 0) > 0 or float(r.var_plus or 0) > 0 for r in _cycle_rows(params))
+
+
+NO_VARIANCE_NOTE = ("<span style='color:#d62728'>No variance in the cycle table (- % / + % empty): all runs are "
+                    "identical - fill in the variance on the tab Input.</span>")
+
+
 def _sim_note(sim, params) -> str:
     return f"{sim.n_runs} runs"
 
@@ -633,11 +642,11 @@ def build_sim_gantt(sim, params) -> go.Figure:
         f"Finish P10 {f['p10'].day} {f['p10']:%B %Y} | P50 {f['p50'].day} {f['p50']:%B %Y} | "
         f"P90 {f['p90'].day} {f['p90']:%B %Y} ({_sim_note(sim, params)})",
         delay,
-    ]
+    ] + ([NO_VARIANCE_NOTE] if _no_variance(params) else [])
     # title anchored 18 px below the top edge (clear of the toolbar), chart right below it
     fig.update_layout(title=dict(text="<br>".join(lines), x=0.01, xanchor="left", y=1 - 18 / 640, yanchor="top",
                                  font=dict(size=15)),
-                      height=640, margin=dict(l=220, t=140))
+                      height=640, margin=dict(l=220, t=140 + 20 * (len(lines) - 5)))
     return fig
 
 
@@ -707,7 +716,8 @@ def build_sim_results(sim, params) -> go.Figure:
                       title=(f"Simulation results - variance on the phase durations ({_sim_note(sim, params)})<br>"
                              f"<sup>P50 = half of the runs finish earlier, P90 = 90 % of the runs finish earlier. "
                              f"{'Nett and gross use the same drawn durations.' if weather else 'Weather downtime off: nett only.'}"
-                             f"</sup>" + (f"<br><sup>{_tidal_check(sim)}</sup>" if weather else "")))
+                             f"</sup>" + (f"<br><sup>{_tidal_check(sim)}</sup>" if weather else "")
+                             + (f"<br><sup>{NO_VARIANCE_NOTE}</sup>" if _no_variance(params) else "")))
     return fig
 
 
